@@ -186,7 +186,7 @@ def check_docker_daemon() -> bool:
         logger.warning(f"Docker check returned non-zero: {result.stderr}")
         return False
     except FileNotFoundError:
-        logger.error("Docker command not found. Is Docker Desktop installed?")
+        logger.error("Docker command not found. Is Docker installed?")
         return False
     except subprocess.TimeoutExpired:
         logger.error("Docker check timed out")

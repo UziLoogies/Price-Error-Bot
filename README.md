@@ -46,18 +46,74 @@ Monitor e-commerce prices and detect price errors automatically. Built with Pyth
 - **SQLAlchemy 2.0** - Async ORM
 - **Playwright** - Headless browser for JS-rendered pages
 
+## Prerequisites
+
+### System Requirements
+
+- **Operating System**: Windows 10/11, Ubuntu 18.04+, Debian 10+, CentOS 7+, or macOS 10.15+
+- **Python**: 3.11 or higher
+- **Docker**: Latest stable version
+- **Memory**: 4GB RAM minimum, 8GB recommended
+- **Storage**: 2GB available space
+
+### Required Software
+
+- **Python 3.11+**: Programming language runtime
+- **Docker & Docker Compose**: For database containers
+- **Git** (optional): For cloning the repository
+
 ## Quick Install (Recommended)
 
-The easiest way to install is using the automated installer. It will install all prerequisites and set up the application.
+The easiest way to install is using the automated installer. Choose the installer for your operating system:
 
-### One-Click Installation
+### Linux/macOS Installation
 
-1. Open PowerShell as Administrator
-2. Navigate to the project directory:
+1. **Clone the repository** (or download and extract the zip file):
+   ```bash
+   git clone https://github.com/your-repo/price-error-bot.git
+   cd price-error-bot
+   ```
+
+2. **Run the installer**:
+   ```bash
+   ./install.sh
+   ```
+
+The installer will automatically:
+- Install system prerequisites (Python 3.11+, Git, etc.)
+- Install Docker and Docker Compose
+- Create Python virtual environment
+- Install all Python dependencies
+- Install Playwright browsers
+- Create `.env` configuration file
+- Start PostgreSQL and Redis containers
+- Run database migrations
+- Seed default store categories
+
+#### Linux/macOS Installer Options
+
+```bash
+# Skip system package installation
+./install.sh --skip-prerequisites
+
+# Skip Docker setup and containers
+./install.sh --skip-docker
+
+# Force recreate virtual environment and .env file
+./install.sh --force
+
+# Show help
+./install.sh --help
+```
+
+### Windows Installation
+
+1. **Open PowerShell as Administrator**
+2. **Navigate to the project directory**:
    ```powershell
    cd C:\price_error_bot
    ```
-3. Run the installer:
+3. **Run the installer**:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
@@ -74,7 +130,7 @@ The installer will automatically:
 - Run database migrations
 - Seed default store categories
 
-### Installer Options
+#### Windows Installer Options
 
 ```powershell
 # Skip prerequisite installation (Python, Docker, Git)
@@ -93,91 +149,150 @@ If you prefer manual installation or the installer doesn't work:
 
 ### Prerequisites
 
-- Windows 10 version 1709 or later (for Winget)
-- Python 3.11+
-- Docker Desktop
-- Git (optional)
+**All Platforms:**
+- Python 3.11 or higher
+- Docker and Docker Compose
+- Git (recommended)
+
+**Platform-Specific:**
+- **Windows**: Windows 10 version 1709+ (for Winget), PowerShell 5.1+
+- **Linux**: sudo access for package installation
+- **macOS**: Homebrew (recommended)
 
 ### Step-by-Step Installation
 
-1. **Clone the repository**
-   ```powershell
-   git clone <repository-url>
-   cd price_error_bot
-   ```
+#### 1. Clone the Repository
+```bash
+git clone <repository-url>
+cd price_error_bot
+```
 
-2. **Create a virtual environment**
-   ```powershell
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   ```
+#### 2. Create a Virtual Environment
 
-3. **Install dependencies**
-   ```powershell
-   pip install -e .
-   ```
+**Linux/macOS:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
-4. **Install Playwright browsers**
-   ```powershell
-   playwright install chromium
-   ```
+**Windows:**
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
 
-5. **Create `.env` file** with the following content:
-   ```env
-   # Database
-   DATABASE_URL=postgresql+asyncpg://price_bot:localdev@localhost:5432/price_bot
+#### 3. Install Dependencies
+```bash
+pip install -e .
+```
 
-   # Redis
-   REDIS_URL=redis://localhost:6379/0
+#### 4. Install Playwright Browsers
+```bash
+playwright install chromium
+```
 
-   # Application
-   APP_HOST=0.0.0.0
-   APP_PORT=8001
-   DEBUG=false
-   LOG_LEVEL=INFO
+#### 5. Configure Environment
 
-   # Discord Webhook (optional)
-   DISCORD_WEBHOOK_URL=
-   ```
+Copy the example environment file and edit it:
+```bash
+cp .env.example .env
+```
 
-6. **Start database containers**
-   ```powershell
-   docker compose up -d postgres redis
-   ```
+Edit the `.env` file with your settings. Key variables to configure:
 
-7. **Run database migrations**
-   ```powershell
-   alembic upgrade head
-   ```
+```env
+# Database (use defaults for local development)
+DATABASE_URL=postgresql+asyncpg://price_bot:localdev@localhost:5432/price_bot
 
-8. **Seed default categories**
-   ```powershell
-   python scripts/seed_categories.py
-   ```
+# Redis (use defaults for local development)  
+REDIS_URL=redis://localhost:6379/0
 
-9. **Start the bot**
-   ```powershell
-   .\start.ps1
-   ```
+# Application settings
+APP_HOST=0.0.0.0
+APP_PORT=8001
+DEBUG=false
+LOG_LEVEL=INFO
+
+# Discord webhook (optional - configure via web UI later)
+DISCORD_WEBHOOK_URL=
+
+# Other settings have sensible defaults
+```
+
+#### 6. Start Database Containers
+```bash
+docker compose up -d postgres redis
+```
+
+Wait for containers to be healthy:
+```bash
+docker compose ps
+```
+
+#### 7. Run Database Migrations
+```bash
+alembic upgrade head
+```
+
+#### 8. Seed Default Categories
+```bash
+python scripts/seed_categories.py
+```
+
+#### 9. Start the Bot
+
+**Linux/macOS:**
+```bash
+./start.sh
+```
+
+**Windows:**
+```powershell
+.\start.ps1
+```
+
+**Or manually:**
+```bash
+source venv/bin/activate  # Linux/macOS
+# .\venv\Scripts\Activate.ps1  # Windows
+python -c "import uvicorn; from src.main import app; uvicorn.run(app, host='0.0.0.0', port=8001)"
+```
 
 ## Starting the Bot
 
-After installation, you have three options to start the bot:
+After installation, you have several options to start the bot:
 
-### Option 1: Desktop Application (Recommended)
+### Option 1: Script Launcher (Recommended)
+
+**Linux/macOS:**
+```bash
+./start.sh
+```
+
+**Windows:**
+```powershell
+.\start.ps1
+```
+
+### Option 2: Desktop Application (Windows Only)
 ```powershell
 .\dist\PriceErrorBot.exe
 ```
 Or double-click `PriceErrorBot.exe` in the `dist` folder.
 
-### Option 2: PowerShell Script
-```powershell
-.\start.ps1
+### Option 3: Python Launcher (Cross-Platform)
+```bash
+python launcher.py
 ```
 
-### Option 3: Python Launcher
-```powershell
-python launcher.py
+### Option 4: Manual Start
+```bash
+# Activate virtual environment first
+source venv/bin/activate  # Linux/macOS
+# .\venv\Scripts\Activate.ps1  # Windows
+
+# Start manually
+python -c "import uvicorn; from src.main import app; uvicorn.run(app, host='0.0.0.0', port=8001)"
 ```
 
 All methods will:
@@ -185,9 +300,9 @@ All methods will:
 - Check and free port 8001 if in use
 - Start the Price Error Bot
 
-Dashboard URL: **http://localhost:8001**
+**Dashboard URL: http://localhost:8001**
 
-**Note:** The desktop application (`.exe`) is recommended as it combines all functionality and provides the best user experience.
+**Note:** The script launcher (start.sh/start.ps1) is recommended for most users as it provides robust startup with health checks and error handling.
 
 ## Desktop Application
 
@@ -340,33 +455,262 @@ The discovered category will be automatically configured with smart defaults:
 
 ## Troubleshooting
 
-### Port 8001 is in use
-The `start.ps1` script automatically kills processes using port 8001. If it fails:
-```powershell
-Get-NetTCPConnection -LocalPort 8001 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
-```
+### Installation Issues
 
-### Docker containers not starting
-Make sure Docker Desktop is running:
-```powershell
-docker compose up -d postgres redis
-```
+#### Python not found or wrong version
+**Error:** `python: command not found` or `Python 3.11+ required`
 
-### Database connection errors
-Wait for PostgreSQL to be healthy:
-```powershell
-docker compose ps
-```
+**Solutions:**
+- **Linux/macOS**: Install Python 3.11+ using your package manager:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt update && sudo apt install python3.11 python3.11-venv python3.11-dev
+  
+  # CentOS/RHEL/Fedora
+  sudo dnf install python3.11 python3.11-venv python3.11-devel
+  
+  # macOS (with Homebrew)
+  brew install python@3.11
+  ```
+- **Windows**: Download from https://www.python.org/downloads/
+- Check if `python3` command works instead of `python`
 
-### Playwright browser errors
-Reinstall Playwright browsers:
-```powershell
-playwright install chromium
-```
+#### Virtual environment creation fails
+**Error:** `The virtual environment was not created successfully because ensurepip is not available`
 
-### Winget not available
-Winget requires Windows 10 version 1709 or later. Install from Microsoft Store:
-https://apps.microsoft.com/store/detail/app-installer/9NBLGGH4NNS1
+**Solutions:**
+- **Ubuntu/Debian**: `sudo apt install python3-venv python3-pip`
+- **CentOS/RHEL**: `sudo dnf install python3-venv python3-pip`
+- **Windows**: Reinstall Python with "Add Python to PATH" checked
+
+#### Docker installation/startup issues
+**Error:** `docker: command not found` or `Cannot connect to Docker daemon`
+
+**Solutions:**
+1. **Install Docker:**
+   - **Linux**: Use the official installer script:
+     ```bash
+     curl -fsSL https://get.docker.com -o get-docker.sh
+     sudo sh get-docker.sh
+     sudo usermod -aG docker $USER
+     newgrp docker  # Or logout/login
+     ```
+   - **Windows**: Install Docker Desktop from https://docker.com
+   - **macOS**: Install Docker Desktop from https://docker.com
+
+2. **Start Docker daemon:**
+   - **Linux**: `sudo systemctl start docker`
+   - **Windows/macOS**: Start Docker Desktop application
+
+3. **Fix permissions (Linux):**
+   ```bash
+   sudo usermod -aG docker $USER
+   sudo chmod 666 /var/run/docker.sock
+   ```
+
+#### Package installation fails
+**Error:** Various pip/package installation errors
+
+**Solutions:**
+1. **Update pip:**
+   ```bash
+   python -m pip install --upgrade pip
+   ```
+
+2. **Clear pip cache:**
+   ```bash
+   pip cache purge
+   ```
+
+3. **Install build tools:**
+   - **Linux**: `sudo apt install build-essential python3-dev` (Ubuntu/Debian)
+   - **Windows**: Install Microsoft Visual C++ Build Tools
+   - **macOS**: `xcode-select --install`
+
+### Runtime Issues
+
+#### Port 8001 is in use
+**Error:** Port conflict when starting the bot
+
+**Solutions:**
+- **Linux/macOS**: The start script automatically handles this, but manually:
+  ```bash
+  # Find processes using port 8001
+  lsof -ti:8001 | xargs kill
+  # Or kill all Python processes
+  pkill -f python
+  ```
+- **Windows**: The PowerShell script handles this, but manually:
+  ```powershell
+  Get-NetTCPConnection -LocalPort 8001 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+  ```
+
+#### Docker containers not starting
+**Error:** Database connection failures
+
+**Solutions:**
+1. **Check container status:**
+   ```bash
+   docker compose ps
+   docker compose logs postgres
+   docker compose logs redis
+   ```
+
+2. **Restart containers:**
+   ```bash
+   docker compose down
+   docker compose up -d postgres redis
+   ```
+
+3. **Reset Docker environment:**
+   ```bash
+   docker compose down -v  # WARNING: This deletes data
+   docker compose up -d postgres redis
+   ```
+
+4. **Check Docker daemon:**
+   ```bash
+   docker info
+   sudo systemctl status docker  # Linux
+   ```
+
+#### Database connection errors
+**Error:** `connection refused` or `database does not exist`
+
+**Solutions:**
+1. **Wait for PostgreSQL to be ready:**
+   ```bash
+   # Check if container is healthy
+   docker inspect price_bot_postgres --format='{{.State.Health.Status}}'
+   
+   # Wait for startup (can take 30-60 seconds)
+   docker compose logs -f postgres
+   ```
+
+2. **Check database configuration:**
+   - Verify `.env` file has correct `DATABASE_URL`
+   - Default: `postgresql+asyncpg://price_bot:localdev@localhost:5432/price_bot`
+
+3. **Recreate database:**
+   ```bash
+   docker compose down postgres
+   docker volume rm price_error_bot_pgdata  # WARNING: Deletes data
+   docker compose up -d postgres
+   alembic upgrade head
+   ```
+
+#### Playwright/browser errors
+**Error:** Browser automation fails or Chromium not found
+
+**Solutions:**
+1. **Reinstall browsers:**
+   ```bash
+   playwright install chromium
+   playwright install-deps  # Linux only - installs system dependencies
+   ```
+
+2. **Check browser installation:**
+   ```bash
+   playwright install --dry-run chromium
+   ```
+
+3. **System dependencies (Linux):**
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1 libasound2
+   
+   # Or use playwright helper
+   sudo playwright install-deps chromium
+   ```
+
+#### Permission errors
+**Error:** Permission denied when starting services
+
+**Solutions:**
+1. **Docker permissions (Linux):**
+   ```bash
+   sudo usermod -aG docker $USER
+   newgrp docker
+   # Or for immediate effect:
+   sudo chmod 666 /var/run/docker.sock
+   ```
+
+2. **File permissions:**
+   ```bash
+   chmod +x install.sh start.sh
+   chown -R $USER:$USER .
+   ```
+
+#### Module import errors
+**Error:** `ModuleNotFoundError` when starting the application
+
+**Solutions:**
+1. **Activate virtual environment:**
+   ```bash
+   source venv/bin/activate  # Linux/macOS
+   # .\venv\Scripts\Activate.ps1  # Windows
+   ```
+
+2. **Reinstall dependencies:**
+   ```bash
+   pip install -e .
+   ```
+
+3. **Check Python path:**
+   ```bash
+   which python  # Should point to venv/bin/python
+   pip list | grep price-error-bot  # Should show the package
+   ```
+
+### Performance Issues
+
+#### High memory usage
+**Solutions:**
+- Reduce `MAX_CONCURRENT_REQUESTS` in `.env` (default: 10)
+- Increase `REQUESTS_PER_SECOND` delay (default: 2.0)
+- Monitor with `docker stats`
+
+#### Slow scanning
+**Solutions:**
+- Check `FETCH_INTERVAL_MINUTES` setting (default: 5 minutes)
+- Verify internet connection and retailer accessibility
+- Check proxy settings if using proxies
+
+### Getting Help
+
+If you're still experiencing issues:
+
+1. **Check logs:**
+   ```bash
+   # Application logs
+   tail -f logs/app.log
+   tail -f logs/error.log
+   
+   # Docker logs
+   docker compose logs postgres redis
+   ```
+
+2. **Enable debug mode:**
+   - Set `DEBUG=true` in `.env`
+   - Set `LOG_LEVEL=DEBUG` in `.env`
+   - Restart the application
+
+3. **Verify your setup:**
+   - Python version: `python --version`
+   - Docker version: `docker --version`
+   - Container status: `docker compose ps`
+   - Port availability: `netstat -tlnp | grep 8001`
+
+4. **Fresh installation:**
+   If all else fails, try a clean installation:
+   ```bash
+   # Remove everything
+   rm -rf venv .env
+   docker compose down -v
+   
+   # Reinstall
+   ./install.sh --force
+   ```
 
 ## Development
 
