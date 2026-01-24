@@ -1,0 +1,472 @@
+{
+  "categories": [
+    {
+      "store": "amazon_us",
+      "category_name": "Electronics Deals",
+      "category_url": "https://www.amazon.com/deals?category=electronics",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "amazon_us",
+      "category_name": "Computer Components",
+      "category_url": "https://www.amazon.com/s?rh=n%3A193870011&deals=widget-deals",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "amazon_us",
+      "category_name": "Home & Kitchen Deals",
+      "category_url": "https://www.amazon.com/deals?category=home-kitchen",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 45.0
+    },
+    {
+      "store": "amazon_us",
+      "category_name": "Video Games Deals",
+      "category_url": "https://www.amazon.com/deals?category=videogames",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "walmart",
+      "category_name": "Electronics Rollbacks",
+      "category_url": "https://www.walmart.com/browse/electronics/3944?facet=special_offers%3ARollback",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "walmart",
+      "category_name": "Computers Clearance",
+      "category_url": "https://www.walmart.com/browse/electronics/computers/3944_3951?facet=special_offers%3AClearance",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "walmart",
+      "category_name": "TV Deals",
+      "category_url": "https://www.walmart.com/browse/electronics/tvs/3944_1060825?facet=special_offers%3ARollback",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "walmart",
+      "category_name": "Toys Clearance",
+      "category_url": "https://www.walmart.com/browse/toys/4171?facet=special_offers%3AClearance",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 6,
+      "min_discount_percent": 50.0
+    },
+    {
+      "store": "target",
+      "category_name": "Electronics Deals",
+      "category_url": "https://www.target.com/c/electronics-deals/-/N-5xtrd",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "target",
+      "category_name": "Home Deals",
+      "category_url": "https://www.target.com/c/home-deals/-/N-5xsyj",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 45.0
+    },
+    {
+      "store": "target",
+      "category_name": "Toy Deals",
+      "category_url": "https://www.target.com/c/toy-deals/-/N-5xt6z",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 6,
+      "min_discount_percent": 50.0
+    },
+    {
+      "store": "target",
+      "category_name": "Clearance",
+      "category_url": "https://www.target.com/c/clearance/-/N-5q0ga",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 50.0
+    },
+    {
+      "store": "bestbuy",
+      "category_name": "Deal of the Day",
+      "category_url": "https://www.bestbuy.com/site/misc/deal-of-the-day/pcmcat248000050016.c",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "bestbuy",
+      "category_name": "Open-Box Deals",
+      "category_url": "https://www.bestbuy.com/site/electronics/open-box/pcmcat748300620853.c",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "bestbuy",
+      "category_name": "Clearance & More",
+      "category_url": "https://www.bestbuy.com/site/misc/clearance-refurbished/pcmcat142300050026.c",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "bestbuy",
+      "category_name": "TV & Home Theater Deals",
+      "category_url": "https://www.bestbuy.com/site/tvs/tv-deals/pcmcat702900050001.c",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "bestbuy",
+      "category_name": "Computer Deals",
+      "category_url": "https://www.bestbuy.com/site/computers-pcs/computer-deals/pcmcat702900050002.c",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "costco",
+      "category_name": "Electronics",
+      "category_url": "https://www.costco.com/electronics.html",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "costco",
+      "category_name": "Computers",
+      "category_url": "https://www.costco.com/computers.html",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "costco",
+      "category_name": "TVs",
+      "category_url": "https://www.costco.com/televisions.html",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "costco",
+      "category_name": "Appliances",
+      "category_url": "https://www.costco.com/appliances.html",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 6,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "homedepot",
+      "category_name": "Special Buys of the Day",
+      "category_url": "https://www.homedepot.com/SpecialBuy/SpecialBuyOfTheDay",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "homedepot",
+      "category_name": "Power Tools",
+      "category_url": "https://www.homedepot.com/b/Tools-Power-Tools/Special-Values/N-5yc1vZc1xyZ1z175a5",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "homedepot",
+      "category_name": "Appliances Sale",
+      "category_url": "https://www.homedepot.com/b/Appliances/On-Sale/N-5yc1vZbv1wZ1z175a5",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "homedepot",
+      "category_name": "Tool Deals",
+      "category_url": "https://www.homedepot.com/b/Tools/Special-Values/N-5yc1vZc1xyZ1z175a5",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "lowes",
+      "category_name": "Clearance",
+      "category_url": "https://www.lowes.com/search?searchTerm=clearance&refinement=4294417586",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "lowes",
+      "category_name": "Tool Deals",
+      "category_url": "https://www.lowes.com/l/tools/tool-deals.html",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "lowes",
+      "category_name": "Appliance Savings",
+      "category_url": "https://www.lowes.com/l/appliances/appliance-savings.html",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "lowes",
+      "category_name": "Weekly Ad Deals",
+      "category_url": "https://www.lowes.com/weekly-ad",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 6,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "newegg",
+      "category_name": "Clearance Store",
+      "category_url": "https://www.newegg.com/ClearanceStore/EventSaleStore/ID-4255",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "newegg",
+      "category_name": "Daily Deals",
+      "category_url": "https://www.newegg.com/DailyDeals",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "newegg",
+      "category_name": "Open Box",
+      "category_url": "https://www.newegg.com/Open-Box",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 20.0
+    },
+    {
+      "store": "newegg",
+      "category_name": "Flash Sale",
+      "category_url": "https://www.newegg.com/promotions/neweggflash",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "macys",
+      "category_name": "Last Act Clearance",
+      "category_url": "https://www.macys.com/shop/featured/last-act",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 50.0
+    },
+    {
+      "store": "macys",
+      "category_name": "One Day Sale",
+      "category_url": "https://www.macys.com/shop/featured/one-day-sale",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "macys",
+      "category_name": "Weekend Sale",
+      "category_url": "https://www.macys.com/shop/featured/weekend-sale",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 45.0
+    },
+    {
+      "store": "microcenter",
+      "category_name": "Clearance Sale",
+      "category_url": "https://www.microcenter.com/site/products/clearance-sale.aspx",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "microcenter",
+      "category_name": "Open Box Items",
+      "category_url": "https://www.microcenter.com/site/products/open-box.aspx",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 15.0
+    },
+    {
+      "store": "microcenter",
+      "category_name": "Daily Deals",
+      "category_url": "https://www.microcenter.com/site/brands/computer-parts-deals.aspx",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "gamestop",
+      "category_name": "Daily Deals",
+      "category_url": "https://www.gamestop.com/deals",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "gamestop",
+      "category_name": "Clearance",
+      "category_url": "https://www.gamestop.com/deals/clearance",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "gamestop",
+      "category_name": "Pre-Owned Deals",
+      "category_url": "https://www.gamestop.com/trade/collectibles/pre-owned",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "bhphotovideo",
+      "category_name": "Deal Zone",
+      "category_url": "https://www.bhphotovideo.com/c/browse/deal-zone/ci/26569",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 25.0
+    },
+    {
+      "store": "bhphotovideo",
+      "category_name": "Used & Open Box",
+      "category_url": "https://www.bhphotovideo.com/c/browse/used-open-box/ci/32351",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 15.0
+    },
+    {
+      "store": "bhphotovideo",
+      "category_name": "Clearance",
+      "category_url": "https://www.bhphotovideo.com/c/browse/clearance/ci/26293",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "kohls",
+      "category_name": "Clearance",
+      "category_url": "https://www.kohls.com/catalog/clearance.jsp",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 8,
+      "min_discount_percent": 50.0
+    },
+    {
+      "store": "kohls",
+      "category_name": "Big Sale",
+      "category_url": "https://www.kohls.com/sale.jsp",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "officedepot",
+      "category_name": "Clearance",
+      "category_url": "https://www.officedepot.com/a/browse/clearance/N=5+9904/",
+      "max_pages": 5,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 40.0
+    },
+    {
+      "store": "officedepot",
+      "category_name": "Weekly Deals",
+      "category_url": "https://www.officedepot.com/cm/deals/weekly-deals",
+      "max_pages": 4,
+      "scan_interval_minutes": 5,
+      "priority": 6,
+      "min_discount_percent": 35.0
+    },
+    {
+      "store": "ebay",
+      "category_name": "Daily Deals",
+      "category_url": "https://www.ebay.com/deals",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 9,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "ebay",
+      "category_name": "Tech Deals",
+      "category_url": "https://www.ebay.com/deals/tech",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 10,
+      "min_discount_percent": 30.0
+    },
+    {
+      "store": "ebay",
+      "category_name": "Fashion Deals",
+      "category_url": "https://www.ebay.com/deals/fashion",
+      "max_pages": 3,
+      "scan_interval_minutes": 5,
+      "priority": 7,
+      "min_discount_percent": 40.0
+    }
+  ]
+}

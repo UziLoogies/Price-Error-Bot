@@ -1,0 +1,1823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Price Error Bot</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'outfit': ['Outfit', 'sans-serif'],
+                    },
+                    colors: {
+                        'glass': 'rgba(255, 255, 255, 0.1)',
+                        'glass-border': 'rgba(255, 255, 255, 0.2)',
+                        'accent': '#00d4ff',
+                        'success': '#00ff88',
+                        'error': '#ff6b6b',
+                        'warning': '#ffc107',
+                    },
+                    backdropBlur: {
+                        'glass': '20px',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        [x-cloak] { display: none !important; }
+        
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            min-height: 100vh;
+        }
+        
+        .glass-card {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 16px;
+        }
+        
+        .glass-card-hover {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .glass-card-hover:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+        
+        .glass-input {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .glass-input:focus {
+            border-color: #00d4ff;
+            box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
+            outline: none;
+        }
+        
+        .tab-active {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: #00d4ff;
+            color: #00d4ff;
+        }
+        
+        .glow-text {
+            text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+        }
+        
+        .glow-success {
+            text-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+        }
+        
+        .glow-error {
+            text-shadow: 0 0 15px rgba(255, 107, 107, 0.5);
+        }
+        
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.9); }
+        }
+        
+        .scan-card-enter {
+            animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+        
+        .spin-loader {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        .counter-pulse {
+            animation: counterPulse 0.5s ease-out;
+        }
+        
+        @keyframes counterPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+        
+        .price-drop {
+            animation: priceFlash 0.6s ease-out;
+        }
+        
+        @keyframes priceFlash {
+            0% { background-color: rgba(0, 255, 136, 0.3); }
+            100% { background-color: transparent; }
+        }
+        
+        .shimmer {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        
+        /* Progress bar */
+        .progress-bar {
+            background: linear-gradient(90deg, #00d4ff, #00ff88);
+            transition: width 0.3s ease;
+        }
+        
+        /* Store badges */
+        .store-badge {
+            font-size: 0.65rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .store-amazon { background: rgba(255, 153, 0, 0.2); color: #ff9900; }
+        .store-walmart { background: rgba(0, 125, 198, 0.2); color: #007dc6; }
+        .store-bestbuy { background: rgba(0, 70, 190, 0.2); color: #0046be; }
+        .store-target { background: rgba(204, 0, 0, 0.2); color: #cc0000; }
+        .store-newegg { background: rgba(241, 90, 34, 0.2); color: #f15a22; }
+        .store-costco { background: rgba(226, 26, 33, 0.2); color: #e21a21; }
+        .store-homedepot { background: rgba(246, 117, 37, 0.2); color: #f67525; }
+        .store-lowes { background: rgba(0, 68, 124, 0.2); color: #004c91; }
+        .store-macys { background: rgba(226, 0, 43, 0.2); color: #e2002b; }
+        .store-microcenter { background: rgba(183, 24, 33, 0.2); color: #b71821; }
+        .store-gamestop { background: rgba(0, 0, 0, 0.2); color: #ffffff; border: 1px solid rgba(255,255,255,0.3); }
+        .store-bhphotovideo { background: rgba(255, 167, 0, 0.2); color: #ffa700; }
+        .store-kohls { background: rgba(127, 35, 57, 0.2); color: #7f2339; }
+        .store-officedepot { background: rgba(237, 28, 36, 0.2); color: #ed1c24; }
+        .store-ebay { background: rgba(0, 100, 210, 0.2); color: #0064d2; }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* Status indicator ring */
+        .status-ring {
+            box-shadow: 0 0 0 2px currentColor;
+        }
+    </style>
+</head>
+<body class="text-white" x-data="dashboard()">
+    
+    <!-- Header -->
+    <header class="glass-card mx-4 mt-4 px-6 py-4">
+        <div class="flex items-center justify-between">
+            <!-- Logo -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight glow-text">Price Error Bot</h1>
+                    <p class="text-xs text-white/50">Real-time price monitoring</p>
+                </div>
+            </div>
+            
+            <!-- Stats Bar -->
+            <div class="flex items-center gap-6">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-accent" x-text="stats.products">--</div>
+                    <div class="text-xs text-white/50">Products</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-white" x-text="stats.stores">--</div>
+                    <div class="text-xs text-white/50">Stores</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-success glow-success" x-text="stats.alerts">--</div>
+                    <div class="text-xs text-white/50">Alerts Today</div>
+                </div>
+                <div class="flex items-center gap-2 ml-4 px-4 py-2 glass-card">
+                    <span class="w-2 h-2 rounded-full pulse-dot" :class="isScanning ? 'bg-success' : 'bg-error'"></span>
+                    <span class="text-sm" x-text="isScanning ? 'Scanning' : 'Paused'"></span>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Tab Navigation -->
+    <nav class="mx-4 mt-4">
+        <div class="flex gap-2">
+            <button 
+                @click="activeTab = 'live-scan'"
+                :class="activeTab === 'live-scan' ? 'tab-active' : 'hover:bg-white/5'"
+                class="px-6 py-3 rounded-xl border border-transparent font-medium transition-all duration-200 flex items-center gap-2"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+                Live Scan
+                <span x-show="scanCounts.pending > 0" class="ml-1 px-2 py-0.5 text-xs bg-warning/20 text-warning rounded-full" x-text="scanCounts.pending"></span>
+            </button>
+            <button 
+                @click="activeTab = 'deals'"
+                :class="activeTab === 'deals' ? 'tab-active' : 'hover:bg-white/5'"
+                class="px-6 py-3 rounded-xl border border-transparent font-medium transition-all duration-200 flex items-center gap-2"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Discovered Deals
+            </button>
+            <button 
+                @click="activeTab = 'alerts'"
+                :class="activeTab === 'alerts' ? 'tab-active' : 'hover:bg-white/5'"
+                class="px-6 py-3 rounded-xl border border-transparent font-medium transition-all duration-200 flex items-center gap-2"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                </svg>
+                Alerts
+                <span x-show="stats.alerts > 0" class="ml-1 px-2 py-0.5 text-xs bg-success/20 text-success rounded-full" x-text="stats.alerts"></span>
+            </button>
+            <button 
+                @click="activeTab = 'categories'"
+                :class="activeTab === 'categories' ? 'tab-active' : 'hover:bg-white/5'"
+                class="px-6 py-3 rounded-xl border border-transparent font-medium transition-all duration-200 flex items-center gap-2"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                </svg>
+                Categories
+                <span x-show="categories.length > 0" class="ml-1 px-2 py-0.5 text-xs bg-accent/20 text-accent rounded-full" x-text="categories.length"></span>
+            </button>
+            <button 
+                @click="activeTab = 'settings'"
+                :class="activeTab === 'settings' ? 'tab-active' : 'hover:bg-white/5'"
+                class="px-6 py-3 rounded-xl border border-transparent font-medium transition-all duration-200 flex items-center gap-2"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                Settings
+            </button>
+        </div>
+    </nav>
+    
+    <!-- Main Content Area -->
+    <main class="mx-4 mt-4 mb-4">
+        
+        <!-- Live Scan Tab -->
+        <div x-show="activeTab === 'live-scan'" x-cloak class="glass-card p-6">
+            <!-- Header with Stats -->
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-4">
+                    <h2 class="text-xl font-semibold">Live Scan Activity</h2>
+                    <span class="text-sm text-white/50" x-text="'Last updated: ' + lastUpdate"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <!-- Store Filter -->
+                    <select 
+                        x-model="storeFilter"
+                        class="glass-input px-4 py-2 rounded-lg text-white text-sm"
+                    >
+                        <option value="all">All Stores</option>
+                        <option value="amazon_us">Amazon</option>
+                        <option value="walmart">Walmart</option>
+                        <option value="bestbuy">Best Buy</option>
+                        <option value="target">Target</option>
+                        <option value="newegg">Newegg</option>
+                        <option value="costco">Costco</option>
+                        <option value="homedepot">Home Depot</option>
+                        <option value="lowes">Lowe's</option>
+                        <option value="macys">Macy's</option>
+                        <option value="microcenter">Micro Center</option>
+                        <option value="gamestop">GameStop</option>
+                        <option value="bhphotovideo">B&H Photo Video</option>
+                        <option value="kohls">Kohl's</option>
+                        <option value="officedepot">Office Depot</option>
+                        <option value="ebay">eBay</option>
+                    </select>
+                    
+                    <!-- Manual Scan Trigger -->
+                    <button 
+                        @click="triggerManualScan()"
+                        :disabled="manualScanRunning"
+                        class="px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 bg-accent/20 text-accent hover:bg-accent/30 disabled:opacity-50"
+                    >
+                        <svg x-show="!manualScanRunning" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        <svg x-show="manualScanRunning" class="w-4 h-4 spin-loader" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        <span x-text="manualScanRunning ? 'Scanning...' : 'Run Scan Now'"></span>
+                    </button>
+                    
+                    <!-- Pause/Resume -->
+                    <button 
+                        @click="isScanning = !isScanning"
+                        class="px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2"
+                        :class="isScanning ? 'bg-error/20 text-error hover:bg-error/30' : 'bg-success/20 text-success hover:bg-success/30'"
+                    >
+                        <svg x-show="isScanning" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                        </svg>
+                        <svg x-show="!isScanning" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                        </svg>
+                        <span x-text="isScanning ? 'Pause' : 'Resume'"></span>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Stats Counters -->
+            <div class="grid grid-cols-4 gap-4 mb-6">
+                <div class="glass-card p-4 text-center">
+                    <div class="flex items-center justify-center gap-2 mb-1">
+                        <svg class="w-5 h-5 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                        </svg>
+                        <span class="text-sm text-white/50">Total Scans</span>
+                    </div>
+                    <div class="text-3xl font-bold text-white" x-text="scanCounts.total">0</div>
+                </div>
+                <div class="glass-card p-4 text-center">
+                    <div class="flex items-center justify-center gap-2 mb-1">
+                        <svg class="w-5 h-5 text-success/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span class="text-sm text-white/50">Success</span>
+                    </div>
+                    <div class="text-3xl font-bold text-success glow-success" x-text="scanCounts.success">0</div>
+                </div>
+                <div class="glass-card p-4 text-center">
+                    <div class="flex items-center justify-center gap-2 mb-1">
+                        <svg class="w-5 h-5 text-error/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span class="text-sm text-white/50">Failed</span>
+                    </div>
+                    <div class="text-3xl font-bold text-error glow-error" x-text="scanCounts.error">0</div>
+                </div>
+                <div class="glass-card p-4 text-center">
+                    <div class="flex items-center justify-center gap-2 mb-1">
+                        <svg class="w-5 h-5 text-warning/70 spin-loader" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        <span class="text-sm text-white/50">Pending</span>
+                    </div>
+                    <div class="text-3xl font-bold text-warning" x-text="scanCounts.pending">0</div>
+                </div>
+            </div>
+            
+            <!-- Success Rate Bar -->
+            <div class="mb-6" x-show="scanCounts.total > 0">
+                <div class="flex justify-between text-sm mb-2">
+                    <span class="text-white/50">Success Rate</span>
+                    <span class="text-accent font-medium" x-text="successRate + '%'"></span>
+                </div>
+                <div class="h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div class="progress-bar h-full rounded-full" :style="'width: ' + successRate + '%'"></div>
+                </div>
+            </div>
+            
+            <!-- Scan Feed -->
+            <div class="space-y-3 max-h-[calc(100vh-520px)] overflow-y-auto pr-2" id="scan-feed">
+                <!-- Scan cards will be loaded here -->
+                <template x-for="scan in filteredScans" :key="scan.id">
+                    <div class="glass-card glass-card-hover p-4 scan-card-enter" :class="{ 'price-drop': scan.priceChange < 0 }">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center gap-3">
+                                <!-- Status indicator -->
+                                <div class="relative">
+                                    <span 
+                                        class="w-3 h-3 rounded-full block"
+                                        :class="{
+                                            'bg-success': scan.status === 'success',
+                                            'bg-error': scan.status === 'error',
+                                            'bg-warning pulse-dot': scan.status === 'pending'
+                                        }"
+                                    ></span>
+                                </div>
+                                
+                                <!-- Store badge -->
+                                <span 
+                                    class="store-badge"
+                                    :class="'store-' + scan.store.replace('_us', '')"
+                                    x-text="getStoreName(scan.store)"
+                                ></span>
+                                
+                                <!-- SKU -->
+                                <span class="text-xs text-white/40 font-mono" x-text="scan.sku"></span>
+                            </div>
+                            <span class="text-xs text-white/40" x-text="scan.time"></span>
+                        </div>
+                        
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1 min-w-0 pr-4">
+                                <p class="font-medium truncate mb-1" x-text="scan.title"></p>
+                                <template x-if="scan.status === 'error'">
+                                    <p class="text-xs text-error/80 flex items-center gap-1">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
+                                        <span x-text="scan.error || 'Fetch failed'"></span>
+                                    </p>
+                                </template>
+                            </div>
+                            
+                            <div class="text-right">
+                                <template x-if="scan.status === 'success' && scan.price">
+                                    <div>
+                                        <div class="flex items-center justify-end gap-2">
+                                            <p class="text-xl font-bold text-success glow-success" x-text="'$' + scan.price.toFixed(2)"></p>
+                                            <template x-if="scan.priceChange !== null && scan.priceChange !== 0">
+                                                <span 
+                                                    class="text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
+                                                    :class="scan.priceChange < 0 ? 'bg-success/20 text-success' : 'bg-error/20 text-error'"
+                                                >
+                                                    <svg x-show="scan.priceChange < 0" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                                                    </svg>
+                                                    <svg x-show="scan.priceChange > 0" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                                                    </svg>
+                                                    <span x-text="(scan.priceChange > 0 ? '+' : '') + scan.priceChange.toFixed(1) + '%'"></span>
+                                                </span>
+                                            </template>
+                                        </div>
+                                        <p class="text-xs text-white/40 mt-1">Fetched successfully</p>
+                                    </div>
+                                </template>
+                                <template x-if="scan.status === 'error'">
+                                    <div class="flex items-center gap-2">
+                                        <svg class="w-6 h-6 text-error/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
+                                    </div>
+                                </template>
+                                <template x-if="scan.status === 'pending'">
+                                    <div class="flex items-center gap-2">
+                                        <svg class="w-6 h-6 text-warning spin-loader" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                        </svg>
+                                        <span class="text-warning text-sm">Scanning...</span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                
+                <!-- Empty State -->
+                <div x-show="filteredScans.length === 0" class="text-center py-16 text-white/40">
+                    <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 flex items-center justify-center">
+                        <svg class="w-10 h-10 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                        </svg>
+                    </div>
+                    <p class="text-lg font-medium mb-1">No scan activity yet</p>
+                    <p class="text-sm">Scans will appear here when the bot runs</p>
+                    <p class="text-xs mt-4 text-white/30">Next scan in ~5 minutes</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Discovered Deals Tab -->
+        <div x-show="activeTab === 'deals'" x-cloak class="glass-card p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold">Discovered Deals</h2>
+                <div class="flex items-center gap-3">
+                    <input 
+                        type="text" 
+                        placeholder="Search deals..." 
+                        class="glass-input px-4 py-2 rounded-lg text-white placeholder-white/40 w-64"
+                        x-model="dealSearch"
+                    >
+                    <select 
+                        class="glass-input px-4 py-2 rounded-lg text-white"
+                        x-model="dealStoreFilter"
+                    >
+                        <option value="">All Stores</option>
+                        <option value="amazon_us">Amazon</option>
+                        <option value="walmart">Walmart</option>
+                        <option value="target">Target</option>
+                        <option value="bestbuy">Best Buy</option>
+                        <option value="costco">Costco</option>
+                        <option value="homedepot">Home Depot</option>
+                        <option value="lowes">Lowe's</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Info Banner -->
+            <div class="glass-card p-4 mb-6 border-l-4 border-accent">
+                <div class="flex items-start gap-3">
+                    <svg class="w-6 h-6 text-accent flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <div>
+                        <p class="font-medium text-accent">Category-Based Deal Discovery</p>
+                        <p class="text-sm text-white/60 mt-1">
+                            Deals are automatically discovered by scanning category pages across 7 major retailers every 5 minutes.
+                            Significant deals (40%+ off) trigger Discord alerts automatically.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Deals Grid - shows recent successful scans with price drops -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 max-h-[calc(100vh-400px)] overflow-y-auto pr-2">
+                <template x-for="scan in filteredDeals" :key="scan.id">
+                    <div class="glass-card glass-card-hover p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span 
+                                class="store-badge"
+                                :class="'store-' + scan.store.replace('_us', '')"
+                                x-text="getStoreName(scan.store)"
+                            ></span>
+                            <span 
+                                class="text-xs px-2 py-1 rounded-full"
+                                :class="scan.discount_percent >= 50 ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'"
+                                x-text="scan.discount_percent ? scan.discount_percent.toFixed(0) + '% OFF' : 'DEAL'"
+                            ></span>
+                        </div>
+                        <p class="font-medium truncate mb-3" x-text="scan.title || scan.sku"></p>
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span class="text-lg font-bold text-success" x-text="scan.price ? '$' + scan.price.toFixed(2) : '--'"></span>
+                            </div>
+                            <div class="text-right" x-show="scan.previous_price">
+                                <span class="text-sm text-white/40 line-through" x-text="'$' + (scan.previous_price || 0).toFixed(2)"></span>
+                            </div>
+                        </div>
+                        <div class="mt-2 text-xs text-white/40" x-text="formatRelativeTime(scan.timestamp)"></div>
+                    </div>
+                </template>
+                
+                <!-- Empty State -->
+                <div x-show="filteredDeals.length === 0" class="col-span-full text-center py-12">
+                    <svg class="w-16 h-16 text-white/20 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <p class="text-white/40">No deals discovered yet</p>
+                    <p class="text-white/30 text-sm mt-1">Deals will appear here as category scans run</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Alerts Tab -->
+        <div x-show="activeTab === 'alerts'" x-cloak class="glass-card p-6">
+            <h2 class="text-xl font-semibold mb-6">Price Alerts</h2>
+            
+            <div class="space-y-3 max-h-[calc(100vh-320px)] overflow-y-auto pr-2">
+                <template x-for="alert in alerts" :key="alert.id">
+                    <div class="glass-card glass-card-hover p-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span 
+                                        class="store-badge"
+                                        :class="'store-' + alert.store.replace('_us', '')"
+                                        x-text="getStoreName(alert.store)"
+                                    ></span>
+                                    <span class="text-xs text-white/40 font-mono" x-text="alert.sku"></span>
+                                </div>
+                                <p class="font-medium" x-text="alert.title"></p>
+                            </div>
+                            <div class="text-right ml-4">
+                                <p class="text-2xl font-bold text-success glow-success" x-text="'$' + alert.price"></p>
+                                <p class="text-sm text-error font-medium" x-text="'-' + alert.drop + '% OFF'"></p>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                
+                <!-- Empty State -->
+                <div x-show="alerts.length === 0" class="text-center py-16 text-white/40">
+                    <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 flex items-center justify-center">
+                        <svg class="w-10 h-10 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                        </svg>
+                    </div>
+                    <p class="text-lg font-medium mb-1">No alerts yet</p>
+                    <p class="text-sm">Price drop alerts will appear here</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Categories Tab -->
+        <div x-show="activeTab === 'categories'" x-cloak class="glass-card p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold">Scan Categories</h2>
+                <div class="flex items-center gap-3">
+                    <select 
+                        x-model="categoryStoreFilter"
+                        class="glass-input px-4 py-2 rounded-lg text-white text-sm"
+                    >
+                        <option value="all">All Stores</option>
+                        <option value="amazon_us">Amazon</option>
+                        <option value="walmart">Walmart</option>
+                        <option value="bestbuy">Best Buy</option>
+                        <option value="target">Target</option>
+                        <option value="costco">Costco</option>
+                        <option value="homedepot">Home Depot</option>
+                        <option value="lowes">Lowe's</option>
+                    </select>
+                    <button 
+                        @click="showCategoryForm = !showCategoryForm"
+                        class="px-4 py-2 bg-accent/20 text-accent rounded-lg font-medium hover:bg-accent/30 transition-all flex items-center gap-2"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        Add Category
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Category Discovery Section -->
+            <div class="mb-6 glass-card p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                    <h3 class="text-lg font-semibold">Discover Category from Product</h3>
+                </div>
+                <p class="text-sm text-white/60 mb-4">
+                    Paste a product URL to automatically discover its category and start scanning for deals
+                </p>
+                <div class="flex gap-3 mb-4">
+                    <input 
+                        type="text" 
+                        placeholder="https://www.bestbuy.com/product/..." 
+                        x-model="productUrl"
+                        class="glass-input flex-1 px-4 py-2 rounded-lg text-white placeholder-white/40 text-sm"
+                        @keyup.enter="discoverCategory()"
+                    />
+                    <button 
+                        @click="discoverCategory()"
+                        :disabled="!productUrl || discoveringCategory"
+                        class="px-6 py-2 bg-accent/20 text-accent rounded-lg font-medium hover:bg-accent/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                        <svg x-show="!discoveringCategory" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        <svg x-show="discoveringCategory" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-text="discoveringCategory ? 'Discovering...' : 'Discover Category'"></span>
+                    </button>
+                </div>
+                
+                <!-- Discovery Results -->
+                <div x-show="discoveryResult" x-cloak class="mt-4 p-4 rounded-lg border" 
+                     :class="discoveryResult.category_id ? 'bg-success/10 border-success/30' : 'bg-blue-500/10 border-blue-500/30'">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-2">
+                                <svg class="w-5 h-5" :class="discoveryResult.category_id ? 'text-success' : 'text-blue-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                <h4 class="font-semibold" :class="discoveryResult.category_id ? 'text-success' : 'text-blue-400'">
+                                    Category Discovered!
+                                </h4>
+                            </div>
+                            <div class="space-y-1 text-sm">
+                                <p><span class="text-white/60">Name:</span> <span class="text-white font-medium" x-text="discoveryResult.category_name"></span></p>
+                                <p><span class="text-white/60">Store:</span> <span class="text-white font-medium" x-text="getStoreName(discoveryResult.store)"></span></p>
+                                <p><span class="text-white/60">Confidence:</span> <span class="text-white font-medium" x-text="Math.round(discoveryResult.confidence * 100) + '%'"></span></p>
+                                <p class="text-xs text-white/50 break-all"><span class="text-white/60">URL:</span> <span x-text="discoveryResult.category_url"></span></p>
+                            </div>
+                            <p x-show="discoveryResult.message" class="mt-2 text-xs" 
+                               :class="discoveryResult.category_id ? 'text-success' : 'text-blue-400'"
+                               x-text="discoveryResult.message"></p>
+                        </div>
+                        <button 
+                            @click="copyCategoryUrl()"
+                            class="p-2 text-white/60 hover:text-white transition-colors"
+                            title="Copy URL"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="flex gap-2 mt-3" x-show="!discoveryResult.category_id">
+                        <button 
+                            @click="createDiscoveredCategory()"
+                            :disabled="creatingCategory"
+                            class="px-4 py-2 bg-success/20 text-success rounded-lg font-medium hover:bg-success/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                            <svg x-show="!creatingCategory" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                            </svg>
+                            <svg x-show="creatingCategory" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span x-text="creatingCategory ? 'Adding...' : 'Add Category'"></span>
+                        </button>
+                        <a 
+                            :href="discoveryResult.category_url" 
+                            target="_blank"
+                            class="px-4 py-2 bg-blue-500/20 text-blue-400 rounded-lg font-medium hover:bg-blue-500/30 transition-all flex items-center gap-2"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                            </svg>
+                            Test URL
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Discovery Error -->
+                <div x-show="discoveryError" x-cloak class="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <h4 class="font-semibold text-red-400">Discovery Failed</h4>
+                    </div>
+                    <p class="text-sm text-white/80" x-text="discoveryError"></p>
+                </div>
+            </div>
+            
+            <!-- Add Category Form -->
+            <div x-show="showCategoryForm" x-cloak class="mb-6 p-4 glass-card">
+                <h3 class="font-medium mb-4">New Category</h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="text-xs text-white/50 mb-1 block">Store</label>
+                        <select x-model="newCategory.store" class="glass-input px-3 py-2 rounded-lg text-white text-sm w-full">
+                            <option value="amazon_us">Amazon</option>
+                            <option value="walmart">Walmart</option>
+                            <option value="bestbuy">Best Buy</option>
+                            <option value="target">Target</option>
+                            <option value="costco">Costco</option>
+                            <option value="homedepot">Home Depot</option>
+                            <option value="lowes">Lowe's</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-white/50 mb-1 block">Category Name</label>
+                        <input type="text" x-model="newCategory.category_name" placeholder="Electronics Deals" class="glass-input px-3 py-2 rounded-lg text-white placeholder-white/40 text-sm w-full">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="text-xs text-white/50 mb-1 block">Category URL</label>
+                        <input type="text" x-model="newCategory.category_url" placeholder="/s?k=electronics&deals-widget=%2522" class="glass-input px-3 py-2 rounded-lg text-white placeholder-white/40 text-sm w-full">
+                    </div>
+                    <div>
+                        <label class="text-xs text-white/50 mb-1 block">Max Pages</label>
+                        <input type="number" x-model="newCategory.max_pages" min="1" max="10" class="glass-input px-3 py-2 rounded-lg text-white text-sm w-full">
+                    </div>
+                    <div>
+                        <label class="text-xs text-white/50 mb-1 block">Scan Interval (minutes)</label>
+                        <input type="number" x-model="newCategory.scan_interval_minutes" min="5" max="1440" class="glass-input px-3 py-2 rounded-lg text-white text-sm w-full">
+                    </div>
+                    <div>
+                        <label class="text-xs text-white/50 mb-1 block">Priority (1-10)</label>
+                        <input type="number" x-model="newCategory.priority" min="1" max="10" class="glass-input px-3 py-2 rounded-lg text-white text-sm w-full">
+                    </div>
+                    <div>
+                        <label class="text-xs text-white/50 mb-1 block">Min Discount %</label>
+                        <input type="number" x-model="newCategory.min_discount_percent" min="10" max="95" class="glass-input px-3 py-2 rounded-lg text-white text-sm w-full">
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button @click="showCategoryForm = false" class="px-4 py-2 text-white/60 hover:text-white transition-colors">Cancel</button>
+                    <button @click="addCategory()" class="px-4 py-2 bg-success/20 text-success rounded-lg font-medium hover:bg-success/30 transition-all">Save Category</button>
+                </div>
+            </div>
+            
+            <!-- Scan Statistics -->
+            <div class="grid grid-cols-4 gap-4 mb-6">
+                <div class="glass-card p-4 text-center">
+                    <div class="text-2xl font-bold text-accent" x-text="scanStats.total_jobs">0</div>
+                    <div class="text-xs text-white/50">Total Scans</div>
+                </div>
+                <div class="glass-card p-4 text-center">
+                    <div class="text-2xl font-bold text-white" x-text="scanStats.jobs_today">0</div>
+                    <div class="text-xs text-white/50">Scans Today</div>
+                </div>
+                <div class="glass-card p-4 text-center">
+                    <div class="text-2xl font-bold text-success" x-text="scanStats.total_products_found">0</div>
+                    <div class="text-xs text-white/50">Products Found</div>
+                </div>
+                <div class="glass-card p-4 text-center">
+                    <div class="text-2xl font-bold text-warning" x-text="scanStats.total_deals_found">0</div>
+                    <div class="text-xs text-white/50">Deals Found</div>
+                </div>
+            </div>
+            
+            <!-- Categories List -->
+            <div class="space-y-3 max-h-[calc(100vh-500px)] overflow-y-auto pr-2">
+                <template x-for="category in filteredCategories" :key="category.id">
+                    <div class="glass-card glass-card-hover p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center gap-3">
+                                <span class="w-2 h-2 rounded-full" :class="category.enabled ? 'bg-success' : 'bg-error'"></span>
+                                <span class="store-badge" :class="'store-' + category.store.replace('_us', '')" x-text="getStoreName(category.store)"></span>
+                                <span class="font-medium" x-text="category.category_name"></span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button @click="triggerCategoryScan(category.id)" class="text-xs px-2 py-1 bg-accent/10 text-accent rounded hover:bg-accent/20 transition-colors">
+                                    Scan Now
+                                </button>
+                                <button @click="toggleCategory(category.id)" class="text-xs px-2 py-1 rounded transition-colors" :class="category.enabled ? 'bg-error/10 text-error hover:bg-error/20' : 'bg-success/10 text-success hover:bg-success/20'" x-text="category.enabled ? 'Disable' : 'Enable'"></button>
+                                <button @click="deleteCategory(category.id)" class="text-xs px-2 py-1 bg-error/10 text-error rounded hover:bg-error/20 transition-colors">Delete</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-4 gap-4 text-sm">
+                            <div>
+                                <span class="text-white/40">Products:</span>
+                                <span class="text-white ml-1" x-text="category.products_found">0</span>
+                            </div>
+                            <div>
+                                <span class="text-white/40">Deals:</span>
+                                <span class="text-success ml-1" x-text="category.deals_found">0</span>
+                            </div>
+                            <div>
+                                <span class="text-white/40">Priority:</span>
+                                <span class="text-accent ml-1" x-text="category.priority">1</span>
+                            </div>
+                            <div>
+                                <span class="text-white/40">Interval:</span>
+                                <span class="text-white ml-1" x-text="category.scan_interval_minutes + 'm'">30m</span>
+                            </div>
+                        </div>
+                        <div class="mt-2 text-xs text-white/30">
+                            <span>Last scanned: </span>
+                            <span x-text="category.last_scanned ? formatRelativeTime(category.last_scanned) : 'Never'">Never</span>
+                        </div>
+                        <div x-show="category.last_error" class="mt-1 text-xs text-error/80">
+                            <span>Last error: </span>
+                            <span x-text="category.last_error"></span>
+                            <span x-show="category.last_error_at" class="text-white/30 ml-1" x-text="'(' + formatRelativeTime(category.last_error_at) + ')'"></span>
+                        </div>
+                    </div>
+                </template>
+                
+                <!-- Empty State -->
+                <div x-show="filteredCategories.length === 0" class="text-center py-16 text-white/40">
+                    <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 flex items-center justify-center">
+                        <svg class="w-10 h-10 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                    </div>
+                    <p class="text-lg font-medium mb-1">No categories configured</p>
+                    <p class="text-sm">Add categories to start scanning for deals</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Settings Tab -->
+        <div x-show="activeTab === 'settings'" x-cloak class="glass-card p-6">
+            <h2 class="text-xl font-semibold mb-6">Settings</h2>
+            
+            <div class="grid grid-cols-1 gap-6">
+                <!-- Proxies Section -->
+                <div class="glass-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-medium flex items-center gap-2">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+                            </svg>
+                            Rotating Proxies
+                            <span class="text-xs px-2 py-0.5 bg-accent/20 text-accent rounded-full" x-text="proxies.length + ' configured'"></span>
+                        </h3>
+                        <button 
+                            @click="showProxyForm = !showProxyForm"
+                            class="px-3 py-1.5 bg-accent/20 text-accent rounded-lg text-sm font-medium hover:bg-accent/30 transition-all flex items-center gap-1"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                            </svg>
+                            Add Proxy
+                        </button>
+                    </div>
+                    
+                    <!-- Add Proxy Form -->
+                    <div x-show="showProxyForm" x-cloak class="mb-4 p-4 bg-white/5 rounded-lg">
+                        <div class="flex gap-3 mb-3">
+                            <input 
+                                type="text" 
+                                placeholder="Name (optional)" 
+                                x-model="newProxy.name"
+                                class="glass-input px-3 py-2 rounded-lg text-white placeholder-white/40 text-sm w-32"
+                            >
+                            <input 
+                                type="text" 
+                                placeholder="host:port:username:password (e.g., 169.197.83.75:8023:user:pass)" 
+                                x-model="newProxy.proxyString"
+                                @input="parseProxyString()"
+                                class="glass-input px-3 py-2 rounded-lg text-white placeholder-white/40 text-sm flex-1"
+                            >
+                            <button 
+                                @click="testNewProxy()"
+                                class="px-4 py-2 bg-warning/20 text-warning rounded-lg text-sm font-medium hover:bg-warning/30 transition-all whitespace-nowrap"
+                                :disabled="proxyTesting || !newProxy.host"
+                            >
+                                <span x-show="!proxyTesting">Test</span>
+                                <span x-show="proxyTesting">Testing...</span>
+                            </button>
+                            <button 
+                                @click="addProxy()"
+                                class="px-4 py-2 bg-success/20 text-success rounded-lg text-sm font-medium hover:bg-success/30 transition-all whitespace-nowrap"
+                                :disabled="!newProxy.host || !newProxy.port"
+                            >
+                                Save
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-4 text-xs text-white/40">
+                            <span>Parsed:</span>
+                            <span x-show="newProxy.host" class="text-white/60">
+                                <span class="text-accent" x-text="newProxy.host"></span>:<span class="text-accent" x-text="newProxy.port"></span>
+                                <template x-if="newProxy.username">
+                                    <span> (auth: <span class="text-success" x-text="newProxy.username"></span>)</span>
+                                </template>
+                            </span>
+                            <span x-show="!newProxy.host" class="text-white/30">Enter proxy string above</span>
+                        </div>
+                        <p x-show="proxyTestResult" class="mt-2 text-sm" :class="proxyTestSuccess ? 'text-success' : 'text-error'" x-text="proxyTestResult"></p>
+                    </div>
+                    
+                    <!-- Proxy List -->
+                    <div class="space-y-2">
+                        <template x-for="proxy in proxies" :key="proxy.id">
+                            <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                                <div class="flex items-center gap-4 flex-1">
+                                    <span class="w-2 h-2 rounded-full" :class="proxy.enabled ? 'bg-success' : 'bg-error'"></span>
+                                    <div class="flex-1">
+                                        <span class="text-sm font-medium" x-text="proxy.name"></span>
+                                        <span class="text-xs text-white/40 ml-2" x-text="proxy.host + ':' + proxy.port"></span>
+                                    </div>
+                                    <div class="text-xs text-white/40">
+                                        <span x-show="proxy.failure_count > 0" class="text-error" x-text="proxy.failure_count + ' failures'"></span>
+                                        <span x-show="proxy.last_success" class="text-success" x-text="'Last success: ' + formatTime(proxy.last_success)"></span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2 ml-4">
+                                    <button 
+                                        @click="testProxy(proxy.id)"
+                                        class="text-xs px-2 py-1 bg-warning/10 text-warning rounded hover:bg-warning/20 transition-colors"
+                                    >
+                                        Test
+                                    </button>
+                                    <button 
+                                        @click="toggleProxy(proxy.id)"
+                                        class="text-xs px-2 py-1 rounded transition-colors"
+                                        :class="proxy.enabled ? 'bg-error/10 text-error hover:bg-error/20' : 'bg-success/10 text-success hover:bg-success/20'"
+                                        x-text="proxy.enabled ? 'Disable' : 'Enable'"
+                                    >
+                                    </button>
+                                    <button 
+                                        @click="deleteProxy(proxy.id)"
+                                        class="text-xs px-2 py-1 bg-error/10 text-error rounded hover:bg-error/20 transition-colors"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="proxies.length === 0">
+                            <p class="text-sm text-white/40 text-center py-4">No proxies configured. Add proxies to enable rotating requests.</p>
+                        </template>
+                    </div>
+                    
+                    <!-- Proxy Activity Panel -->
+                    <div x-show="proxies.length > 0" class="mt-4 p-4 bg-white/5 rounded-lg">
+                        <h4 class="text-sm font-medium mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                            </svg>
+                            Proxy Activity
+                        </h4>
+                        <div class="space-y-2">
+                            <template x-for="proxy in proxies" :key="'activity-' + proxy.id">
+                                <div class="flex items-center justify-between p-2 bg-white/5 rounded-lg text-xs">
+                                    <div class="flex items-center gap-3">
+                                        <!-- Active indicator -->
+                                        <span 
+                                            class="w-2 h-2 rounded-full"
+                                            :class="isProxyActive(proxy) ? 'bg-success pulse-dot' : (proxy.enabled ? 'bg-white/30' : 'bg-error/50')"
+                                        ></span>
+                                        <span class="font-medium text-white/80" x-text="proxy.name"></span>
+                                        <span x-show="isProxyActive(proxy)" class="px-1.5 py-0.5 bg-success/20 text-success rounded text-[10px] font-medium">ACTIVE</span>
+                                    </div>
+                                    <div class="flex items-center gap-4 text-white/50">
+                                        <!-- Last used -->
+                                        <div class="flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                            </svg>
+                                            <span x-text="formatRelativeTime(proxy.last_used)"></span>
+                                        </div>
+                                        <!-- Last success -->
+                                        <div x-show="proxy.last_success" class="flex items-center gap-1 text-success/70">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                            </svg>
+                                            <span x-text="formatRelativeTime(proxy.last_success)"></span>
+                                        </div>
+                                        <!-- Failure count -->
+                                        <div x-show="proxy.failure_count > 0" class="flex items-center gap-1" :class="proxy.failure_count >= 3 ? 'text-error' : 'text-warning'">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                            </svg>
+                                            <span x-text="proxy.failure_count + ' fail' + (proxy.failure_count > 1 ? 's' : '')"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Webhooks -->
+                    <div class="glass-card p-5">
+                        <h3 class="font-medium mb-4 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                            </svg>
+                            Discord Webhooks
+                        </h3>
+                        <div class="space-y-2">
+                            <template x-for="webhook in webhooks" :key="webhook.id">
+                                <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                                    <div class="flex items-center gap-3">
+                                        <span class="w-2 h-2 rounded-full" :class="webhook.enabled ? 'bg-success' : 'bg-error'"></span>
+                                        <span class="text-sm font-medium" x-text="webhook.name || 'Webhook #' + webhook.id"></span>
+                                    </div>
+                                    <button class="text-xs text-accent hover:text-white transition-colors">Edit</button>
+                                </div>
+                            </template>
+                            <template x-if="webhooks.length === 0">
+                                <p class="text-sm text-white/40 text-center py-4">No webhooks configured</p>
+                            </template>
+                            <button class="w-full p-3 border border-dashed border-white/20 rounded-lg text-white/40 hover:text-white hover:border-accent transition-all flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                Add Webhook
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Detection Rules -->
+                    <div class="glass-card p-5">
+                        <h3 class="font-medium mb-4 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                            </svg>
+                            Detection Rules
+                        </h3>
+                        <div class="space-y-2">
+                            <template x-for="rule in rules" :key="rule.id">
+                                <div class="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                                    <div>
+                                        <span class="text-sm font-medium" x-text="rule.name"></span>
+                                        <span class="text-xs text-white/40 ml-2" x-text="rule.type"></span>
+                                    </div>
+                                    <span class="text-sm text-accent font-medium" x-text="rule.value"></span>
+                                </div>
+                            </template>
+                            <template x-if="rules.length === 0">
+                                <p class="text-sm text-white/40 text-center py-4">No rules configured</p>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+    </main>
+    
+    <script>
+        function dashboard() {
+            return {
+                activeTab: 'live-scan',
+                isScanning: true,
+                storeFilter: 'all',
+                productSearch: '',
+                dealSearch: '',
+                dealStoreFilter: '',
+                lastUpdate: 'just now',
+                
+                stats: {
+                    products: '--',
+                    stores: '--',
+                    alerts: 0
+                },
+                
+                scans: [],
+                products: [],
+                alerts: [],
+                webhooks: [],
+                rules: [],
+                proxies: [],
+                categories: [],
+                scanJobs: [],
+                exclusions: [],
+                
+                // Scan stats
+                scanStats: {
+                    total_jobs: 0,
+                    jobs_today: 0,
+                    total_products_found: 0,
+                    total_deals_found: 0
+                },
+                
+                // Manual scan state
+                manualScanRunning: false,
+                
+                // Category form state
+                showCategoryForm: false,
+                categoryStoreFilter: 'all',
+                newCategory: {
+                    store: 'amazon_us',
+                    category_name: '',
+                    category_url: '',
+                    max_pages: 2,
+                    scan_interval_minutes: 30,
+                    priority: 1,
+                    min_discount_percent: 50
+                },
+                
+                // Category discovery state
+                productUrl: '',
+                discoveringCategory: false,
+                discoveryResult: null,
+                discoveryError: null,
+                creatingCategory: false,
+                
+                // Proxy form state
+                showProxyForm: false,
+                proxyTesting: false,
+                proxyTestResult: '',
+                proxyTestSuccess: false,
+                newProxy: {
+                    name: '',
+                    proxyString: '',
+                    host: '',
+                    port: '',
+                    username: '',
+                    password: ''
+                },
+                
+                get scanCounts() {
+                    const counts = { total: 0, success: 0, error: 0, pending: 0 };
+                    this.scans.forEach(s => {
+                        counts.total++;
+                        if (s.status === 'success') counts.success++;
+                        else if (s.status === 'error') counts.error++;
+                        else if (s.status === 'pending') counts.pending++;
+                    });
+                    return counts;
+                },
+                
+                get successRate() {
+                    const completed = this.scanCounts.success + this.scanCounts.error;
+                    if (completed === 0) return 0;
+                    return Math.round((this.scanCounts.success / completed) * 100);
+                },
+                
+                get filteredScans() {
+                    if (this.storeFilter === 'all') return this.scans;
+                    return this.scans.filter(s => s.store === this.storeFilter);
+                },
+                
+                get filteredProducts() {
+                    if (!this.productSearch) return this.products;
+                    const search = this.productSearch.toLowerCase();
+                    return this.products.filter(p => 
+                        (p.title && p.title.toLowerCase().includes(search)) ||
+                        (p.sku && p.sku.toLowerCase().includes(search)) ||
+                        (p.store && p.store.toLowerCase().includes(search))
+                    );
+                },
+                
+                get filteredDeals() {
+                    // Filter scans to only show successful ones with price changes (deals)
+                    let deals = this.scans.filter(s => 
+                        s.status === 'success' && 
+                        (s.price || s.previous_price)
+                    );
+                    
+                    // Apply store filter
+                    if (this.dealStoreFilter) {
+                        deals = deals.filter(d => d.store === this.dealStoreFilter);
+                    }
+                    
+                    // Apply search filter
+                    if (this.dealSearch) {
+                        const search = this.dealSearch.toLowerCase();
+                        deals = deals.filter(d => 
+                            (d.title && d.title.toLowerCase().includes(search)) ||
+                            (d.sku && d.sku.toLowerCase().includes(search))
+                        );
+                    }
+                    
+                    // Calculate discount percentage for each deal
+                    deals = deals.map(d => ({
+                        ...d,
+                        discount_percent: d.previous_price && d.price ? 
+                            ((d.previous_price - d.price) / d.previous_price * 100) : null
+                    }));
+                    
+                    // Sort by discount percentage (highest first)
+                    return deals.sort((a, b) => (b.discount_percent || 0) - (a.discount_percent || 0));
+                },
+                
+                get filteredCategories() {
+                    if (this.categoryStoreFilter === 'all') return this.categories;
+                    return this.categories.filter(c => c.store === this.categoryStoreFilter);
+                },
+                
+                getStoreName(store) {
+                    const names = {
+                        'amazon_us': 'Amazon',
+                        'walmart': 'Walmart',
+                        'bestbuy': 'Best Buy',
+                        'target': 'Target',
+                        'newegg': 'Newegg',
+                        'costco': 'Costco',
+                        'homedepot': 'Home Depot',
+                        'lowes': "Lowe's",
+                        'macys': "Macy's"
+                    };
+                    return names[store] || store;
+                },
+                
+                init() {
+                    this.loadStats();
+                    this.loadProducts();
+                    this.loadAlerts();
+                    this.loadWebhooks();
+                    this.loadRules();
+                    this.loadProxies();
+                    this.loadScans();
+                    this.loadCategories();
+                    this.loadScanStats();
+                    this.startPolling();
+                },
+                
+                async loadStats() {
+                    try {
+                        const res = await fetch('/api/dashboard/stats');
+                        const data = await res.json();
+                        this.stats = data;
+                    } catch (e) {
+                        console.error('Failed to load stats:', e);
+                    }
+                },
+                
+                async loadProducts() {
+                    try {
+                        const res = await fetch('/api/products');
+                        this.products = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load products:', e);
+                    }
+                },
+                
+                async loadAlerts() {
+                    try {
+                        const res = await fetch('/api/alerts');
+                        const data = await res.json();
+                        this.alerts = data.slice(0, 20).map(a => ({
+                            id: a.id,
+                            title: a.product?.title || 'Product',
+                            store: a.product?.store || 'unknown',
+                            sku: a.product?.sku || '',
+                            price: a.triggered_price,
+                            drop: a.previous_price ? Math.round((1 - a.triggered_price / a.previous_price) * 100) : 0
+                        }));
+                    } catch (e) {
+                        console.error('Failed to load alerts:', e);
+                    }
+                },
+                
+                async loadWebhooks() {
+                    try {
+                        const res = await fetch('/api/webhooks');
+                        this.webhooks = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load webhooks:', e);
+                    }
+                },
+                
+                async loadRules() {
+                    try {
+                        const res = await fetch('/api/rules');
+                        const data = await res.json();
+                        this.rules = data.map(r => ({
+                            id: r.id,
+                            name: r.name || r.rule_type,
+                            type: r.rule_type,
+                            value: r.threshold ? r.threshold + '%' : '--'
+                        }));
+                    } catch (e) {
+                        console.error('Failed to load rules:', e);
+                    }
+                },
+                
+                async loadScans() {
+                    try {
+                        const res = await fetch('/api/dashboard/scans');
+                        const data = await res.json();
+                        // Add price change simulation (will be real data from API)
+                        this.scans = data.map(s => ({
+                            ...s,
+                            priceChange: s.previousPrice ? ((s.price - s.previousPrice) / s.previousPrice) * 100 : null
+                        }));
+                        this.lastUpdate = new Date().toLocaleTimeString();
+                    } catch (e) {
+                        console.error('Failed to load scans:', e);
+                    }
+                },
+                
+                startPolling() {
+                    // Poll for scan updates every 3 seconds
+                    setInterval(() => {
+                        if (this.isScanning) {
+                            this.loadScans();
+                            this.loadStats();
+                        }
+                    }, 3000);
+                },
+                
+                // Proxy management functions
+                parseProxyString() {
+                    // Parse format: host:port:username:password
+                    const parts = this.newProxy.proxyString.trim().split(':');
+                    
+                    if (parts.length >= 2) {
+                        this.newProxy.host = parts[0];
+                        this.newProxy.port = parts[1];
+                    }
+                    if (parts.length >= 3) {
+                        this.newProxy.username = parts[2];
+                    }
+                    if (parts.length >= 4) {
+                        this.newProxy.password = parts.slice(3).join(':'); // Handle passwords with colons
+                    }
+                    
+                    // Auto-generate name if empty
+                    if (!this.newProxy.name && this.newProxy.host) {
+                        this.newProxy.name = `Proxy ${this.newProxy.host.split('.').slice(-2).join('.')}`;
+                    }
+                },
+                
+                async loadProxies() {
+                    try {
+                        const res = await fetch('/api/proxies');
+                        this.proxies = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load proxies:', e);
+                    }
+                },
+                
+                async addProxy() {
+                    if (!this.newProxy.host || !this.newProxy.port) {
+                        alert('Please enter a valid proxy string (host:port:user:pass)');
+                        return;
+                    }
+                    
+                    try {
+                        const res = await fetch('/api/proxies', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                name: this.newProxy.name,
+                                host: this.newProxy.host,
+                                port: parseInt(this.newProxy.port),
+                                username: this.newProxy.username || null,
+                                password: this.newProxy.password || null,
+                                enabled: true
+                            })
+                        });
+                        
+                        if (res.ok) {
+                            this.newProxy = { name: '', proxyString: '', host: '', port: '', username: '', password: '' };
+                            this.showProxyForm = false;
+                            this.proxyTestResult = '';
+                            await this.loadProxies();
+                        } else {
+                            const error = await res.json();
+                            alert('Failed to add proxy: ' + (error.detail || 'Unknown error'));
+                        }
+                    } catch (e) {
+                        console.error('Failed to add proxy:', e);
+                        alert('Failed to add proxy');
+                    }
+                },
+                
+                async testNewProxy() {
+                    if (!this.newProxy.host || !this.newProxy.port) {
+                        alert('Please enter a valid proxy string first');
+                        return;
+                    }
+                    
+                    this.proxyTesting = true;
+                    this.proxyTestResult = '';
+                    
+                    try {
+                        const res = await fetch('/api/proxies/test-new', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                name: this.newProxy.name || `Proxy ${this.newProxy.host}`,
+                                host: this.newProxy.host,
+                                port: parseInt(this.newProxy.port),
+                                username: this.newProxy.username || null,
+                                password: this.newProxy.password || null
+                            })
+                        });
+                        
+                        const result = await res.json();
+                        this.proxyTestSuccess = result.success;
+                        this.proxyTestResult = result.message + (result.response_time_ms ? ` (${result.response_time_ms.toFixed(0)}ms)` : '');
+                    } catch (e) {
+                        this.proxyTestSuccess = false;
+                        this.proxyTestResult = 'Test failed: ' + e.message;
+                    } finally {
+                        this.proxyTesting = false;
+                    }
+                },
+                
+                async testProxy(proxyId) {
+                    try {
+                        const res = await fetch(`/api/proxies/${proxyId}/test`, { method: 'POST' });
+                        const result = await res.json();
+                        alert(result.message + (result.response_time_ms ? ` (${result.response_time_ms.toFixed(0)}ms)` : ''));
+                        await this.loadProxies();
+                    } catch (e) {
+                        alert('Test failed: ' + e.message);
+                    }
+                },
+                
+                async toggleProxy(proxyId) {
+                    const proxy = this.proxies.find(p => p.id === proxyId);
+                    if (!proxy) return;
+                    
+                    try {
+                        await fetch(`/api/proxies/${proxyId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ enabled: !proxy.enabled })
+                        });
+                        await this.loadProxies();
+                    } catch (e) {
+                        console.error('Failed to toggle proxy:', e);
+                    }
+                },
+                
+                async deleteProxy(proxyId) {
+                    if (!confirm('Are you sure you want to delete this proxy?')) return;
+                    
+                    try {
+                        await fetch(`/api/proxies/${proxyId}`, { method: 'DELETE' });
+                        await this.loadProxies();
+                    } catch (e) {
+                        console.error('Failed to delete proxy:', e);
+                    }
+                },
+                
+                formatTime(dateString) {
+                    if (!dateString) return 'Never';
+                    const date = new Date(dateString);
+                    return date.toLocaleTimeString();
+                },
+                
+                formatRelativeTime(dateString) {
+                    if (!dateString) return 'Never';
+                    const date = new Date(dateString);
+                    const now = new Date();
+                    const diffMs = now - date;
+                    const diffSecs = Math.floor(diffMs / 1000);
+                    const diffMins = Math.floor(diffMs / 60000);
+                    const diffHours = Math.floor(diffMs / 3600000);
+                    const diffDays = Math.floor(diffMs / 86400000);
+                    
+                    if (diffSecs < 30) return 'Just now';
+                    if (diffMins < 1) return `${diffSecs}s ago`;
+                    if (diffMins < 60) return `${diffMins}m ago`;
+                    if (diffHours < 24) return `${diffHours}h ago`;
+                    if (diffDays < 7) return `${diffDays}d ago`;
+                    return date.toLocaleDateString();
+                },
+                
+                isProxyActive(proxy) {
+                    if (!proxy.last_used) return false;
+                    const lastUsed = new Date(proxy.last_used);
+                    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+                    return lastUsed > fiveMinAgo;
+                },
+                
+                // Category management
+                async loadCategories() {
+                    try {
+                        const res = await fetch('/api/categories');
+                        this.categories = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load categories:', e);
+                    }
+                },
+                
+                async loadScanStats() {
+                    try {
+                        const res = await fetch('/api/scans/stats');
+                        this.scanStats = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load scan stats:', e);
+                    }
+                },
+                
+                async addCategory() {
+                    if (!this.newCategory.category_name || !this.newCategory.category_url) {
+                        alert('Please fill in category name and URL');
+                        return;
+                    }
+                    
+                    try {
+                        const res = await fetch('/api/categories', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                ...this.newCategory,
+                                enabled: true
+                            })
+                        });
+                        
+                        if (res.ok) {
+                            this.newCategory = {
+                                store: 'amazon_us',
+                                category_name: '',
+                                category_url: '',
+                                max_pages: 2,
+                                scan_interval_minutes: 30,
+                                priority: 1,
+                                min_discount_percent: 50
+                            };
+                            this.showCategoryForm = false;
+                            await this.loadCategories();
+                        } else {
+                            const error = await res.json();
+                            alert('Failed to add category: ' + (error.detail || 'Unknown error'));
+                        }
+                    } catch (e) {
+                        console.error('Failed to add category:', e);
+                        alert('Failed to add category');
+                    }
+                },
+                
+                async discoverCategory() {
+                    if (!this.productUrl || !this.productUrl.trim()) {
+                        this.discoveryError = 'Please enter a product URL';
+                        this.discoveryResult = null;
+                        return;
+                    }
+                    
+                    this.discoveringCategory = true;
+                    this.discoveryError = null;
+                    this.discoveryResult = null;
+                    
+                    try {
+                        const url = `/api/categories/discover-from-product?product_url=${encodeURIComponent(this.productUrl.trim())}&auto_create=false`;
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.discoveryResult = data;
+                            this.discoveryError = null;
+                        } else {
+                            const error = await res.json();
+                            this.discoveryError = error.detail || 'Failed to discover category. Make sure the URL is a valid product page from a supported retailer.';
+                            this.discoveryResult = null;
+                        }
+                    } catch (e) {
+                        console.error('Failed to discover category:', e);
+                        this.discoveryError = 'Network error. Please check your connection and try again.';
+                        this.discoveryResult = null;
+                    } finally {
+                        this.discoveringCategory = false;
+                    }
+                },
+                
+                async createDiscoveredCategory() {
+                    if (!this.discoveryResult || this.discoveryResult.category_id) {
+                        return;
+                    }
+                    
+                    this.creatingCategory = true;
+                    
+                    try {
+                        const url = `/api/categories/discover-from-product?product_url=${encodeURIComponent(this.productUrl.trim())}&auto_create=true`;
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.discoveryResult = data;
+                            await this.loadCategories();
+                            await this.loadScanStats();
+                            
+                            // Show success message
+                            setTimeout(() => {
+                                this.discoveryResult = null;
+                                this.productUrl = '';
+                            }, 3000);
+                        } else {
+                            const error = await res.json();
+                            alert('Failed to create category: ' + (error.detail || 'Unknown error'));
+                        }
+                    } catch (e) {
+                        console.error('Failed to create category:', e);
+                        alert('Failed to create category');
+                    } finally {
+                        this.creatingCategory = false;
+                    }
+                },
+                
+                copyCategoryUrl() {
+                    if (!this.discoveryResult || !this.discoveryResult.category_url) {
+                        return;
+                    }
+                    
+                    navigator.clipboard.writeText(this.discoveryResult.category_url).then(() => {
+                        // Show brief feedback
+                        const btn = event.target.closest('button');
+                        const originalHTML = btn.innerHTML;
+                        btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+                        setTimeout(() => {
+                            btn.innerHTML = originalHTML;
+                        }, 1000);
+                    }).catch(err => {
+                        console.error('Failed to copy URL:', err);
+                    });
+                },
+                
+                async toggleCategory(categoryId) {
+                    const category = this.categories.find(c => c.id === categoryId);
+                    if (!category) return;
+                    
+                    try {
+                        await fetch(`/api/categories/${categoryId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ enabled: !category.enabled })
+                        });
+                        await this.loadCategories();
+                    } catch (e) {
+                        console.error('Failed to toggle category:', e);
+                    }
+                },
+                
+                async deleteCategory(categoryId) {
+                    if (!confirm('Are you sure you want to delete this category?')) return;
+                    
+                    try {
+                        await fetch(`/api/categories/${categoryId}`, { method: 'DELETE' });
+                        await this.loadCategories();
+                    } catch (e) {
+                        console.error('Failed to delete category:', e);
+                    }
+                },
+                
+                async triggerCategoryScan(categoryId) {
+                    try {
+                        const res = await fetch(`/api/scans/trigger/category/${categoryId}`, {
+                            method: 'POST'
+                        });
+                        
+                        if (res.ok) {
+                            const data = await res.json();
+                            alert(data.message);
+                            await this.loadScanStats();
+                        } else {
+                            const error = await res.json();
+                            alert('Failed to trigger scan: ' + (error.detail || 'Unknown error'));
+                        }
+                    } catch (e) {
+                        console.error('Failed to trigger scan:', e);
+                        alert('Failed to trigger scan');
+                    }
+                },
+                
+                async triggerManualScan() {
+                    if (this.manualScanRunning) return;
+                    
+                    this.manualScanRunning = true;
+                    
+                    try {
+                        const payload = {};
+                        if (this.storeFilter !== 'all') {
+                            payload.store = this.storeFilter;
+                        }
+                        
+                        const res = await fetch('/api/scans/trigger', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (res.ok) {
+                            // Poll for completion
+                            const checkComplete = setInterval(async () => {
+                                const activeRes = await fetch('/api/scans/active');
+                                const active = await activeRes.json();
+                                if (active.length === 0) {
+                                    clearInterval(checkComplete);
+                                    this.manualScanRunning = false;
+                                    await this.loadScanStats();
+                                    await this.loadCategories();
+                                    await this.loadScans();
+                                }
+                            }, 2000);
+                            
+                            // Timeout after 5 minutes
+                            setTimeout(() => {
+                                clearInterval(checkComplete);
+                                this.manualScanRunning = false;
+                            }, 300000);
+                        } else {
+                            const error = await res.json();
+                            alert('Failed to trigger scan: ' + (error.detail || 'Unknown error'));
+                            this.manualScanRunning = false;
+                        }
+                    } catch (e) {
+                        console.error('Failed to trigger manual scan:', e);
+                        alert('Failed to trigger scan');
+                        this.manualScanRunning = false;
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

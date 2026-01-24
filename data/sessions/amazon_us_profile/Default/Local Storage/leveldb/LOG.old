@@ -1,0 +1,18 @@
+2026/01/19-13:47:40.990 268c Reusing MANIFEST C:\price_error_bot\data\sessions\amazon_us_profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/19-13:47:40.995 268c Recovering log #50
+2026/01/19-13:47:41.005 268c Reusing old log C:\price_error_bot\data\sessions\amazon_us_profile\Default\Local Storage\leveldb/000050.log 
+2026/01/19-14:00:16.792 4ac0 Level-0 table #54: started
+2026/01/19-14:00:16.796 4ac0 Level-0 table #54: 94711 bytes OK
+2026/01/19-14:00:16.797 4ac0 Delete type=0 #50
+2026/01/19-14:00:16.798 4ac0 Compacting 4@0 + 1@1 files
+2026/01/19-14:00:16.804 4ac0 Generated table #55@0: 661 keys, 111358 bytes
+2026/01/19-14:00:16.804 4ac0 Compacted 4@0 + 1@1 files => 111358 bytes
+2026/01/19-14:00:16.805 4ac0 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/01/19-14:00:16.805 4ac0 Delete type=2 #45
+2026/01/19-14:00:16.805 4ac0 Delete type=2 #47
+2026/01/19-14:00:16.805 4ac0 Delete type=2 #49
+2026/01/19-14:00:16.805 4ac0 Delete type=2 #51
+2026/01/19-14:00:16.805 4ac0 Delete type=2 #54
+2026/01/19-14:01:02.601 4ac0 Level-0 table #57: started
+2026/01/19-14:01:02.614 4ac0 Level-0 table #57: 83268 bytes OK
+2026/01/19-14:01:02.614 4ac0 Delete type=0 #53

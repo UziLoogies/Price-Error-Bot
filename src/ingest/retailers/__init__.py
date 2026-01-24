@@ -1,0 +1,1 @@
+"""Retailer-specific fetcher implementations."""
