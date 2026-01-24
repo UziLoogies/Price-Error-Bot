@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -41,6 +42,43 @@ class Product(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+
+
+class SearchQuery(Base):
+    """Search query analytics and logging."""
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    filters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SearchSuggestion(Base):
+    """Search suggestions and autocomplete data."""
+
+    __tablename__ = "search_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    suggestion_text: Mapped[str] = mapped_column(String(256), nullable=False)
+    frequency: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_used: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "field_name", "suggestion_text", name="uq_search_suggestions"),
+    )
+    search_vector: Mapped[Optional[str]] = mapped_column(TSVECTOR, nullable=True)
 
     # Relationships
     price_history: Mapped[list["PriceHistory"]] = relationship(
@@ -154,6 +192,42 @@ class ProxyConfig(Base):
     )
 
 
+class SearchQuery(Base):
+    """Search query analytics and logging."""
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    filters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SearchSuggestion(Base):
+    """Search suggestions and autocomplete data."""
+
+    __tablename__ = "search_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    suggestion_text: Mapped[str] = mapped_column(String(256), nullable=False)
+    frequency: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_used: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "field_name", "suggestion_text", name="uq_search_suggestions"),
+    )
+
+
 class StoreCategory(Base):
     """Store category configuration for category scanning."""
 
@@ -172,6 +246,43 @@ class StoreCategory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+
+
+class SearchQuery(Base):
+    """Search query analytics and logging."""
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    filters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SearchSuggestion(Base):
+    """Search suggestions and autocomplete data."""
+
+    __tablename__ = "search_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    suggestion_text: Mapped[str] = mapped_column(String(256), nullable=False)
+    frequency: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_used: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "field_name", "suggestion_text", name="uq_search_suggestions"),
+    )
+    search_vector: Mapped[Optional[str]] = mapped_column(TSVECTOR, nullable=True)
 
     # Scan configuration
     max_pages: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
@@ -225,6 +336,42 @@ class ScanJob(Base):
         DateTime, default=datetime.utcnow, nullable=False
     )
 
+
+class SearchQuery(Base):
+    """Search query analytics and logging."""
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    filters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SearchSuggestion(Base):
+    """Search suggestions and autocomplete data."""
+
+    __tablename__ = "search_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    suggestion_text: Mapped[str] = mapped_column(String(256), nullable=False)
+    frequency: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_used: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "field_name", "suggestion_text", name="uq_search_suggestions"),
+    )
+
     @property
     def progress_percent(self) -> float:
         """Calculate progress percentage."""
@@ -247,4 +394,40 @@ class ProductExclusion(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SearchQuery(Base):
+    """Search query analytics and logging."""
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    filters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SearchSuggestion(Base):
+    """Search suggestions and autocomplete data."""
+
+    __tablename__ = "search_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    suggestion_text: Mapped[str] = mapped_column(String(256), nullable=False)
+    frequency: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_used: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "field_name", "suggestion_text", name="uq_search_suggestions"),
     )

@@ -1,0 +1,709 @@
+<!-- 
+Enhanced Search Components for Price Error Bot Dashboard
+
+Components:
+1. Global search bar with typeahead
+2. Advanced filter panel
+3. Search results display with highlighting
+4. Pagination controls
+-->
+
+<!-- Global Search Bar Component -->
+<div class="search-container" x-data="searchComponent()">
+    <!-- Main search input -->
+    <div class="relative">
+        <div class="glass-card p-4 mb-4">
+            <div class="flex items-center gap-4">
+                <!-- Search input -->
+                <div class="flex-1 relative">
+                    <input
+                        type="text"
+                        x-model="searchQuery"
+                        @input.debounce.300ms="performSearch()"
+                        @focus="showSuggestions = true"
+                        @blur.debounce.200ms="hideSuggestions()"
+                        placeholder="Search products, alerts, categories..."
+                        class="glass-input w-full px-4 py-3 pl-12 pr-4 rounded-lg text-white placeholder-white/40"
+                    >
+                    <!-- Search icon -->
+                    <div class="absolute left-4 top-1/2 transform -translate-y-1/2">
+                        <svg class="w-5 h-5 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </div>
+                    <!-- Loading indicator -->
+                    <div x-show="searching" class="absolute right-4 top-1/2 transform -translate-y-1/2">
+                        <div class="w-4 h-4 border-2 border-accent border-t-transparent rounded-full spin-loader"></div>
+                    </div>
+                </div>
+                
+                <!-- Search scope selector -->
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-white/60">Search in:</label>
+                    <select x-model="searchScope" class="glass-input px-3 py-2 rounded-lg text-white text-sm">
+                        <option value="all">All</option>
+                        <option value="products">Products</option>
+                        <option value="alerts">Alerts</option>
+                        <option value="categories">Categories</option>
+                    </select>
+                </div>
+                
+                <!-- Advanced filters toggle -->
+                <button
+                    @click="showAdvancedFilters = !showAdvancedFilters"
+                    class="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-sm"
+                    :class="{ 'bg-accent/20 text-accent': showAdvancedFilters }"
+                >
+                    <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4"/>
+                    </svg>
+                    Filters
+                    <span x-show="activeFiltersCount > 0" class="ml-1 px-2 py-1 bg-accent/30 text-accent rounded-full text-xs" x-text="activeFiltersCount"></span>
+                </button>
+            </div>
+            
+            <!-- Search suggestions dropdown -->
+            <div 
+                x-show="showSuggestions && (suggestions.length > 0 || recentSearches.length > 0)"
+                x-cloak
+                class="absolute left-0 right-0 top-full mt-2 glass-card border border-white/20 rounded-lg max-h-96 overflow-y-auto z-50"
+            >
+                <!-- Suggestions -->
+                <div x-show="suggestions.length > 0" class="p-4 border-b border-white/10">
+                    <h4 class="text-sm font-medium text-white/60 mb-2">Suggestions</h4>
+                    <template x-for="suggestion in suggestions" :key="suggestion.text">
+                        <div
+                            @click="selectSuggestion(suggestion)"
+                            class="flex items-center justify-between p-2 hover:bg-white/10 rounded-lg cursor-pointer"
+                        >
+                            <span class="text-white" x-html="suggestion.highlight || suggestion.text"></span>
+                            <div class="flex items-center gap-2 text-xs text-white/40">
+                                <span x-text="suggestion.type"></span>
+                                <span x-show="suggestion.count" x-text="suggestion.count + ' results'"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                
+                <!-- Recent searches -->
+                <div x-show="recentSearches.length > 0" class="p-4">
+                    <h4 class="text-sm font-medium text-white/60 mb-2">Recent Searches</h4>
+                    <template x-for="recent in recentSearches" :key="recent.query">
+                        <div
+                            @click="selectRecent(recent)"
+                            class="flex items-center p-2 hover:bg-white/10 rounded-lg cursor-pointer"
+                        >
+                            <svg class="w-4 h-4 text-white/40 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <span class="text-white text-sm" x-text="recent.query"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Advanced Filters Panel -->
+        <div
+            x-show="showAdvancedFilters"
+            x-collapse
+            class="glass-card p-6 mb-4"
+        >
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Store Filter -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-medium text-white/80">Stores</label>
+                    <div class="space-y-2 max-h-32 overflow-y-auto">
+                        <template x-for="store in availableStores" :key="store.name">
+                            <label class="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    :value="store.name"
+                                    x-model="filters.stores"
+                                    @change="performSearch()"
+                                    class="rounded border-white/20 bg-white/10 text-accent focus:ring-accent focus:ring-offset-0"
+                                >
+                                <span class="text-sm text-white" x-text="store.display_name"></span>
+                                <span class="text-xs text-white/40" x-text="'(' + store.count + ')'"></span>
+                            </label>
+                        </template>
+                    </div>
+                </div>
+                
+                <!-- Price Range Filter -->
+                <div class="space-y-2" x-show="searchScope === 'all' || searchScope === 'products'">
+                    <label class="block text-sm font-medium text-white/80">Price Range</label>
+                    <div class="space-y-3">
+                        <div class="flex gap-3">
+                            <input
+                                type="number"
+                                x-model="filters.priceMin"
+                                @input.debounce.500ms="performSearch()"
+                                placeholder="Min $"
+                                class="glass-input flex-1 px-3 py-2 rounded-lg text-white placeholder-white/40"
+                            >
+                            <span class="self-center text-white/60">to</span>
+                            <input
+                                type="number"
+                                x-model="filters.priceMax"
+                                @input.debounce.500ms="performSearch()"
+                                placeholder="Max $"
+                                class="glass-input flex-1 px-3 py-2 rounded-lg text-white placeholder-white/40"
+                            >
+                        </div>
+                        <!-- Quick price ranges -->
+                        <div class="flex gap-2 flex-wrap">
+                            <template x-for="range in quickPriceRanges" :key="range.label">
+                                <button
+                                    @click="selectPriceRange(range)"
+                                    class="px-3 py-1 text-xs bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+                                    x-text="range.label"
+                                ></button>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Date Range Filter -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-medium text-white/80">Date Range</label>
+                    <div class="space-y-3">
+                        <div class="flex gap-3">
+                            <input
+                                type="date"
+                                x-model="filters.dateFrom"
+                                @change="performSearch()"
+                                class="glass-input flex-1 px-3 py-2 rounded-lg text-white"
+                            >
+                            <span class="self-center text-white/60">to</span>
+                            <input
+                                type="date"
+                                x-model="filters.dateTo"
+                                @change="performSearch()"
+                                class="glass-input flex-1 px-3 py-2 rounded-lg text-white"
+                            >
+                        </div>
+                        <!-- Quick date ranges -->
+                        <div class="flex gap-2 flex-wrap">
+                            <template x-for="range in quickDateRanges" :key="range.label">
+                                <button
+                                    @click="selectDateRange(range)"
+                                    class="px-3 py-1 text-xs bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+                                    x-text="range.label"
+                                ></button>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Additional filters for specific entity types -->
+            <div x-show="searchScope === 'products'" class="mt-6 pt-6 border-t border-white/10">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Discount filter -->
+                    <div class="space-y-2">
+                        <label class="block text-sm font-medium text-white/80">Discount %</label>
+                        <input
+                            type="number"
+                            x-model="filters.discountMin"
+                            @input.debounce.500ms="performSearch()"
+                            placeholder="Min discount %"
+                            min="0"
+                            max="100"
+                            class="glass-input w-full px-3 py-2 rounded-lg text-white placeholder-white/40"
+                        >
+                    </div>
+                    
+                    <!-- Boolean filters -->
+                    <div class="space-y-3">
+                        <label class="flex items-center gap-3">
+                            <input
+                                type="checkbox"
+                                x-model="filters.hasAlerts"
+                                @change="performSearch()"
+                                class="rounded border-white/20 bg-white/10 text-accent focus:ring-accent focus:ring-offset-0"
+                            >
+                            <span class="text-sm text-white">Has Alerts</span>
+                        </label>
+                        
+                        <label class="flex items-center gap-3">
+                            <input
+                                type="checkbox"
+                                x-model="filters.inStock"
+                                @change="performSearch()"
+                                class="rounded border-white/20 bg-white/10 text-accent focus:ring-accent focus:ring-offset-0"
+                            >
+                            <span class="text-sm text-white">In Stock Only</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Filter actions -->
+            <div class="flex justify-between items-center mt-6 pt-6 border-t border-white/10">
+                <button
+                    @click="clearAllFilters()"
+                    class="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-sm"
+                    :disabled="activeFiltersCount === 0"
+                >
+                    Clear All Filters
+                </button>
+                
+                <div class="text-sm text-white/60">
+                    <span x-text="searchResults.total_count || 0"></span> results found
+                    <span x-show="searchResults.response_time_ms" x-text="'in ' + searchResults.response_time_ms + 'ms'"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Search Results Section -->
+    <div class="space-y-4">
+        <!-- Results header with sorting -->
+        <div x-show="searchResults.products.length > 0 || searching" class="flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <h3 class="text-lg font-semibold text-white">Search Results</h3>
+                <div x-show="searchResults.total_count > 0" class="text-sm text-white/60">
+                    <span x-text="searchResults.total_count"></span> total
+                    <span x-show="searchResults.response_time_ms" x-text="'• ' + searchResults.response_time_ms + 'ms'"></span>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <!-- Sort options -->
+                <select x-model="sortBy" @change="performSearch()" class="glass-input px-3 py-1 rounded-lg text-white text-sm">
+                    <option value="relevance">Relevance</option>
+                    <option value="created_at">Newest</option>
+                    <option value="title">Name</option>
+                    <option value="msrp">Price</option>
+                </select>
+                
+                <!-- Sort order toggle -->
+                <button
+                    @click="toggleSortOrder()"
+                    class="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+                    :title="sortOrder === 'desc' ? 'Sort Ascending' : 'Sort Descending'"
+                >
+                    <svg x-show="sortOrder === 'desc'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                    </svg>
+                    <svg x-show="sortOrder === 'asc'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Loading state -->
+        <div x-show="searching" class="text-center py-8">
+            <div class="inline-flex items-center gap-3">
+                <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full spin-loader"></div>
+                <span class="text-white/60">Searching...</span>
+            </div>
+        </div>
+        
+        <!-- Search results grid -->
+        <div x-show="!searching && searchResults.products.length > 0" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+            <template x-for="product in searchResults.products" :key="product.id">
+                <div class="glass-card glass-card-hover p-4">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="store-badge" :class="'store-' + product.store.replace('_us', '')" x-text="getStoreName(product.store)"></span>
+                            <span x-show="product.search_score > 0" class="text-xs px-2 py-1 bg-accent/20 text-accent rounded-full" x-text="Math.round(product.search_score * 100) + '%'"></span>
+                        </div>
+                        <div class="text-xs text-white/40" x-text="formatRelativeTime(product.created_at)"></div>
+                    </div>
+                    
+                    <!-- Product title with highlighting -->
+                    <h4 class="font-medium text-white mb-2 line-clamp-2">
+                        <span x-html="product.highlights.title ? product.highlights.title[0] : product.title"></span>
+                    </h4>
+                    
+                    <!-- SKU with highlighting -->
+                    <div class="text-sm text-white/60 mb-3">
+                        SKU: <span x-html="product.highlights.sku ? product.highlights.sku[0] : product.sku"></span>
+                    </div>
+                    
+                    <!-- Price information -->
+                    <div class="flex items-center justify-between">
+                        <div class="space-y-1">
+                            <div x-show="product.current_price" class="text-lg font-bold text-success">
+                                $<span x-text="product.current_price?.toFixed(2)"></span>
+                            </div>
+                            <div x-show="product.msrp && product.msrp !== product.current_price" class="text-sm text-white/40 line-through">
+                                MSRP: $<span x-text="product.msrp?.toFixed(2)"></span>
+                            </div>
+                        </div>
+                        
+                        <div x-show="product.discount_percent" class="text-right">
+                            <div class="text-sm font-semibold text-success">
+                                <span x-text="product.discount_percent?.toFixed(0)"></span>% OFF
+                            </div>
+                            <div x-show="product.in_stock === false" class="text-xs text-error">Out of Stock</div>
+                            <div x-show="product.in_stock === true" class="text-xs text-success">In Stock</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Action buttons -->
+                    <div class="flex justify-end mt-4 space-x-2">
+                        <button
+                            @click="viewProduct(product)"
+                            class="px-3 py-1 bg-accent/20 text-accent rounded hover:bg-accent/30 transition-colors text-sm"
+                        >
+                            View
+                        </button>
+                        <button x-show="product.url" @click="openProductUrl(product.url)" class="px-3 py-1 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm">
+                            Open
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+        
+        <!-- Empty state -->
+        <div x-show="!searching && searchResults.products.length === 0 && searchQuery" class="text-center py-16 text-white/40">
+            <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 flex items-center justify-center">
+                <svg class="w-10 h-10 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+            </div>
+            <p class="text-lg font-medium mb-1">No results found</p>
+            <p class="text-sm">Try different keywords or adjust your filters</p>
+        </div>
+        
+        <!-- Pagination -->
+        <div 
+            x-show="searchResults.pagination && (searchResults.pagination.has_next || searchResults.pagination.has_previous)"
+            class="flex items-center justify-between pt-6"
+        >
+            <button
+                @click="loadPreviousPage()"
+                :disabled="!searchResults.pagination.has_previous || searching"
+                class="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors text-sm"
+            >
+                ← Previous
+            </button>
+            
+            <div class="text-sm text-white/60">
+                Page <span x-text="currentPage"></span>
+                <span x-show="searchResults.pagination.total_count">
+                    of <span x-text="Math.ceil(searchResults.pagination.total_count / searchResults.pagination.limit)"></span>
+                </span>
+            </div>
+            
+            <button
+                @click="loadNextPage()"
+                :disabled="!searchResults.pagination.has_next || searching"
+                class="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors text-sm"
+            >
+                Next →
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Search Component JavaScript -->
+<script>
+function searchComponent() {
+    return {
+        // Search state
+        searchQuery: '',
+        searchScope: 'products',
+        searching: false,
+        searchResults: {
+            products: [],
+            pagination: {},
+            facets: {},
+            query_info: {}
+        },
+        
+        // Filter state
+        showAdvancedFilters: false,
+        showSuggestions: false,
+        filters: {
+            stores: [],
+            priceMin: null,
+            priceMax: null,
+            discountMin: null,
+            dateFrom: null,
+            dateTo: null,
+            hasAlerts: null,
+            inStock: null
+        },
+        
+        // Suggestions
+        suggestions: [],
+        recentSearches: [],
+        
+        // Sorting and pagination
+        sortBy: 'relevance',
+        sortOrder: 'desc',
+        currentPage: 1,
+        currentCursor: null,
+        
+        // Available options (populated from API)
+        availableStores: [
+            { name: 'amazon_us', display_name: 'Amazon', count: 0 },
+            { name: 'walmart', display_name: 'Walmart', count: 0 },
+            { name: 'bestbuy', display_name: 'Best Buy', count: 0 },
+            { name: 'target', display_name: 'Target', count: 0 },
+            { name: 'costco', display_name: 'Costco', count: 0 }
+        ],
+        
+        quickPriceRanges: [
+            { label: '< $50', min: null, max: 50 },
+            { label: '$50-200', min: 50, max: 200 },
+            { label: '$200-500', min: 200, max: 500 },
+            { label: '$500+', min: 500, max: null }
+        ],
+        
+        quickDateRanges: [
+            { label: 'Today', days: 0 },
+            { label: 'Week', days: 7 },
+            { label: 'Month', days: 30 },
+            { label: 'Year', days: 365 }
+        ],
+
+        get activeFiltersCount() {
+            let count = 0;
+            if (this.filters.stores.length > 0) count++;
+            if (this.filters.priceMin !== null) count++;
+            if (this.filters.priceMax !== null) count++;
+            if (this.filters.discountMin !== null) count++;
+            if (this.filters.dateFrom !== null) count++;
+            if (this.filters.dateTo !== null) count++;
+            if (this.filters.hasAlerts !== null) count++;
+            if (this.filters.inStock !== null) count++;
+            return count;
+        },
+
+        async init() {
+            // Load initial suggestions
+            await this.loadSuggestions();
+        },
+
+        async performSearch() {
+            if (!this.searchQuery?.trim()) {
+                this.searchResults = { products: [], pagination: {}, facets: {}, query_info: {} };
+                return;
+            }
+
+            this.searching = true;
+            this.showSuggestions = false;
+
+            try {
+                const params = new URLSearchParams();
+                params.append('q', this.searchQuery);
+                
+                // Add filters
+                if (this.filters.stores.length > 0) {
+                    this.filters.stores.forEach(store => params.append('stores', store));
+                }
+                if (this.filters.priceMin !== null) params.append('price_min', this.filters.priceMin);
+                if (this.filters.priceMax !== null) params.append('price_max', this.filters.priceMax);
+                if (this.filters.discountMin !== null) params.append('discount_min', this.filters.discountMin);
+                if (this.filters.dateFrom !== null) params.append('created_after', this.filters.dateFrom);
+                if (this.filters.dateTo !== null) params.append('created_before', this.filters.dateTo);
+                if (this.filters.hasAlerts !== null) params.append('has_alerts', this.filters.hasAlerts);
+                if (this.filters.inStock !== null) params.append('in_stock', this.filters.inStock);
+                
+                // Add sorting
+                params.append('sort_by', this.sortBy);
+                params.append('sort_order', this.sortOrder);
+                
+                // Add cursor if available
+                if (this.currentCursor) {
+                    params.append('cursor', this.currentCursor);
+                }
+
+                const response = await fetch(`/api/search/products?${params.toString()}`);
+                if (response.ok) {
+                    this.searchResults = await response.json();
+                    
+                    // Update facets to available stores
+                    if (this.searchResults.facets?.stores) {
+                        this.updateAvailableStores(this.searchResults.facets.stores);
+                    }
+                } else {
+                    console.error('Search failed:', response.status);
+                    this.searchResults = { products: [], pagination: {}, facets: {}, query_info: {} };
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                this.searchResults = { products: [], pagination: {}, facets: {}, query_info: {} };
+            } finally {
+                this.searching = false;
+            }
+        },
+
+        async loadSuggestions() {
+            if (!this.searchQuery || this.searchQuery.length < 2) {
+                this.suggestions = [];
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/search/suggestions?q=${encodeURIComponent(this.searchQuery)}&entity_type=${this.searchScope}&limit=8`);
+                if (response.ok) {
+                    const data = await response.json();
+                    this.suggestions = data.suggestions || [];
+                    this.recentSearches = data.recent_searches || [];
+                }
+            } catch (error) {
+                console.error('Suggestions error:', error);
+            }
+        },
+
+        selectSuggestion(suggestion) {
+            this.searchQuery = suggestion.text;
+            this.showSuggestions = false;
+            this.performSearch();
+        },
+
+        selectRecent(recent) {
+            this.searchQuery = recent.query;
+            this.showSuggestions = false;
+            this.performSearch();
+        },
+
+        hideSuggestions() {
+            setTimeout(() => {
+                this.showSuggestions = false;
+            }, 200);
+        },
+
+        toggleSortOrder() {
+            this.sortOrder = this.sortOrder === 'desc' ? 'asc' : 'desc';
+            this.performSearch();
+        },
+
+        selectPriceRange(range) {
+            this.filters.priceMin = range.min;
+            this.filters.priceMax = range.max;
+            this.performSearch();
+        },
+
+        selectDateRange(range) {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - range.days);
+            
+            this.filters.dateTo = endDate.toISOString().split('T')[0];
+            this.filters.dateFrom = startDate.toISOString().split('T')[0];
+            this.performSearch();
+        },
+
+        clearAllFilters() {
+            this.filters = {
+                stores: [],
+                priceMin: null,
+                priceMax: null,
+                discountMin: null,
+                dateFrom: null,
+                dateTo: null,
+                hasAlerts: null,
+                inStock: null
+            };
+            this.performSearch();
+        },
+
+        updateAvailableStores(facetStores) {
+            // Update store counts from facet data
+            facetStores.forEach(facetStore => {
+                const store = this.availableStores.find(s => s.name === facetStore.name);
+                if (store) {
+                    store.count = facetStore.count;
+                    store.display_name = facetStore.display_name || store.display_name;
+                }
+            });
+        },
+
+        loadNextPage() {
+            if (this.searchResults.pagination?.next_cursor) {
+                this.currentCursor = this.searchResults.pagination.next_cursor;
+                this.currentPage++;
+                this.performSearch();
+            }
+        },
+
+        loadPreviousPage() {
+            if (this.searchResults.pagination?.previous_cursor) {
+                this.currentCursor = this.searchResults.pagination.previous_cursor;
+                this.currentPage--;
+                this.performSearch();
+            }
+        },
+
+        getStoreName(store) {
+            const names = {
+                'amazon_us': 'Amazon',
+                'walmart': 'Walmart',
+                'bestbuy': 'Best Buy',
+                'target': 'Target',
+                'costco': 'Costco',
+                'newegg': 'Newegg',
+                'homedepot': 'Home Depot',
+                'lowes': "Lowe's",
+                'macys': "Macy's",
+                'microcenter': 'Micro Center'
+            };
+            return names[store] || store;
+        },
+
+        formatRelativeTime(dateStr) {
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+            if (diffDays > 0) return `${diffDays}d ago`;
+            if (diffHours > 0) return `${diffHours}h ago`;
+            if (diffMinutes > 0) return `${diffMinutes}m ago`;
+            return 'just now';
+        },
+
+        viewProduct(product) {
+            // Implementation for viewing product details
+            console.log('View product:', product);
+        },
+
+        openProductUrl(url) {
+            if (url) {
+                window.open(url, '_blank');
+            }
+        }
+    };
+}
+</script>
+
+<!-- CSS for search components -->
+<style>
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.search-container mark {
+    background-color: rgba(0, 212, 255, 0.3);
+    color: #00d4ff;
+    padding: 0 2px;
+    border-radius: 2px;
+}
+
+.search-suggestions {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.search-input {
+    transition: all 0.2s ease;
+}
+
+.search-input:focus {
+    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.3);
+}
+</style>

@@ -415,7 +415,41 @@ All configuration is done via the `.env` file or the web dashboard.
 1. Access the dashboard at `http://localhost:8001`
 2. Go to **Categories** tab to manage store categories
 3. Configure Discord webhooks in **Settings**
-4. The bot will automatically scan categories and send alerts for deals
+4. Use **Search Products** tab for advanced product search and filtering
+5. The bot will automatically scan categories and send alerts for deals
+
+### Enhanced Search Functionality
+
+The bot includes powerful search capabilities:
+
+**Product Search:**
+- Search by product name, SKU, brand, or store
+- Use quotes for exact phrases: `"iPhone 13 Pro"`
+- Apply filters: price ranges, discounts, stock status
+- Sort by relevance, price, discount, or date
+
+**Search Examples:**
+```
+iphone 13                      # Find iPhone 13 products
+"MacBook Pro" store:amazon     # MacBook Pro from Amazon only
+sku:B08N5WRWNW                # Find by exact SKU
+price:500..1000               # Products priced $500-1000
+laptop -refurbished           # Laptops excluding refurbished
+```
+
+**Quick Filters:**
+- Store selection (Amazon, Walmart, Best Buy, etc.)
+- Price ranges with preset options
+- Discount percentage minimums
+- In-stock only toggle
+- Products with active alerts
+
+**Advanced Features:**
+- Auto-complete suggestions as you type
+- Search result highlighting
+- Relevance-based ranking
+- Faceted filtering with counts
+- Recent search history
 
 ### Category Discovery
 
@@ -675,6 +709,54 @@ The discovered category will be automatically configured with smart defaults:
 - Check `FETCH_INTERVAL_MINUTES` setting (default: 5 minutes)
 - Verify internet connection and retailer accessibility
 - Check proxy settings if using proxies
+
+### Search functionality not working
+
+**Error:** Search returns no results or search interface not loading
+
+**Solutions:**
+1. **Check database migrations:**
+   ```bash
+   source venv/bin/activate  # Linux/macOS
+   # .\venv\Scripts\Activate.ps1  # Windows
+   alembic current
+   alembic upgrade head
+   ```
+
+2. **Verify search indexes:**
+   ```bash
+   # Connect to PostgreSQL and verify indexes exist
+   docker exec -it price_bot_postgres psql -U price_bot -d price_bot -c "\d+ products"
+   
+   # Should show indexes including:
+   # - idx_products_search_vector (GIN)
+   # - idx_products_title_trigram (GIN)
+   # - idx_products_sku_trigram (GIN)
+   ```
+
+3. **Check PostgreSQL extensions:**
+   ```sql
+   -- Connect to database and verify extensions
+   SELECT * FROM pg_extension WHERE extname IN ('pg_trgm', 'btree_gin');
+   ```
+
+4. **Regenerate search vectors:**
+   ```sql
+   -- If search vectors are empty, regenerate them
+   UPDATE products SET search_vector = 
+       setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+       setweight(to_tsvector('english', COALESCE(sku, '')), 'B') ||
+       setweight(to_tsvector('english', COALESCE(store, '')), 'C');
+   ```
+
+5. **Test with sample data:**
+   ```bash
+   # Create test data for search functionality
+   python scripts/seed_search_data.py
+   
+   # Verify search API
+   curl "http://localhost:8001/api/search/products?q=iphone&limit=5"
+   ```
 
 ### Getting Help
 

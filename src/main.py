@@ -18,7 +18,7 @@ from src.db.session import engine
 from src.db.models import Base
 from src.worker.scheduler import setup_scheduler
 from src.worker.tasks import task_runner
-from src.api.routes import alerts, products, rules, stores, webhooks, dashboard, proxies, categories, scans, exclusions
+from src.api.routes import alerts, products, rules, stores, webhooks, dashboard, proxies, categories, scans, exclusions, search
 from src import metrics
 from src.ingest.proxy_manager import proxy_rotator
 from src.db.session import AsyncSessionLocal
@@ -106,6 +106,7 @@ app.include_router(proxies.router)
 app.include_router(categories.router)
 app.include_router(scans.router)
 app.include_router(exclusions.router)
+app.include_router(search.router)
 
 
 @app.get("/", response_class=HTMLResponse)
