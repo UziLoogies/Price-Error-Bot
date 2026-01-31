@@ -6,7 +6,9 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -14,7 +16,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from src.db.encryption import EncryptedString
 
 
 class Base(DeclarativeBase):
@@ -48,6 +53,11 @@ class Product(Base):
     )  # When we first discovered this product
     price_change_count_24h: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_price_change_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # AI/LLM fields
+    structured_attributes: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    llm_reviewed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    llm_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     price_history: Mapped[list["PriceHistory"]] = relationship(
@@ -55,6 +65,18 @@ class Product(Base):
     )
     alerts: Mapped[list["Alert"]] = relationship(
         "Alert", back_populates="product", cascade="all, delete-orphan"
+    )
+    embeddings: Mapped[list["ProductEmbedding"]] = relationship(
+        "ProductEmbedding", back_populates="product", cascade="all, delete-orphan"
+    )
+    attributes: Mapped[Optional["ProductAttributes"]] = relationship(
+        "ProductAttributes", back_populates="product", cascade="all, delete-orphan", uselist=False
+    )
+    matches_as_1: Mapped[list["ProductMatch"]] = relationship(
+        "ProductMatch", foreign_keys="ProductMatch.product_id_1", back_populates="product_1"
+    )
+    matches_as_2: Mapped[list["ProductMatch"]] = relationship(
+        "ProductMatch", foreign_keys="ProductMatch.product_id_2", back_populates="product_2"
     )
 
     __table_args__ = (UniqueConstraint("sku", "store", name="uq_product_sku_store"),)
@@ -156,7 +178,9 @@ class Webhook(Base):
     
     # Telegram-specific fields
     telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    telegram_bot_token: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    telegram_bot_token: Mapped[Optional[str]] = mapped_column(
+        EncryptedString(512), nullable=True
+    )  # Encrypted token
     
     # Statistics
     last_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -178,7 +202,9 @@ class ProxyConfig(Base):
     host: Mapped[str] = mapped_column(String(256), nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     username: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    password: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    password: Mapped[Optional[str]] = mapped_column(
+        EncryptedString(512), nullable=True
+    )  # Encrypted password
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     # Proxy type classification
@@ -364,3 +390,126 @@ class NotificationHistory(Base):
         DateTime, default=datetime.utcnow, nullable=False
     )
     response_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class ProductEmbedding(Base):
+    """Product embeddings for semantic matching."""
+    
+    __tablename__ = "product_embeddings"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    embedding: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)  # 768-D vector
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    text_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+    
+    # Relationships
+    product: Mapped["Product"] = relationship("Product", back_populates="embeddings")
+    
+    __table_args__ = (
+        UniqueConstraint("product_id", "model_name", name="uq_product_embedding_model"),
+    )
+
+
+class ProductAttributes(Base):
+    """Structured product attributes extracted from text."""
+    
+    __tablename__ = "product_attributes"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    brand: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    size: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    color: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    extraction_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # 'ner', 'llm', 'rule'
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    raw_attributes: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # Full extracted attributes
+    
+    # Relationships
+    product: Mapped["Product"] = relationship("Product", back_populates="attributes")
+
+
+class ProductMatch(Base):
+    """Cross-store product matches with similarity scores."""
+    
+    __tablename__ = "product_matches"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id_1: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    product_id_2: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    similarity_score: Mapped[float] = mapped_column(Float, nullable=False)
+    match_method: Mapped[str] = mapped_column(String(32), nullable=False)  # 'embedding', 'manual', 'rule'
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Relationships
+    product_1: Mapped["Product"] = relationship("Product", foreign_keys=[product_id_1], back_populates="matches_as_1")
+    product_2: Mapped["Product"] = relationship("Product", foreign_keys=[product_id_2], back_populates="matches_as_2")
+    
+    __table_args__ = (
+        UniqueConstraint("product_id_1", "product_id_2", name="uq_product_match"),
+        CheckConstraint("product_id_1 < product_id_2", name="ck_product_match_ordering"),
+    )
+    
+    @classmethod
+    def create_normalized(cls, product_id_a: int, product_id_b: int, **kwargs):
+        """
+        Create a ProductMatch with normalized ordering (product_id_1 < product_id_2).
+        
+        Args:
+            product_id_a: First product ID
+            product_id_b: Second product ID
+            **kwargs: Other fields for ProductMatch
+            
+        Returns:
+            ProductMatch instance with normalized IDs
+        """
+        product_id_1 = min(product_id_a, product_id_b)
+        product_id_2 = max(product_id_a, product_id_b)
+        return cls(product_id_1=product_id_1, product_id_2=product_id_2, **kwargs)
+
+
+class LLMFeedback(Base):
+    """Feedback on LLM outputs for fine-tuning and improvement."""
+    
+    __tablename__ = "llm_feedback"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    llm_output: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    user_correction: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)  # 'anomaly_review', 'attribute_extraction', etc.
+    prompt_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    feedback_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )

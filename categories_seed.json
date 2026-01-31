@@ -306,7 +306,7 @@
     {
       "store": "newegg",
       "category_name": "Daily Deals",
-      "category_url": "https://www.newegg.com/DailyDeals",
+      "category_url": "https://www.newegg.com/Newegg-Deals/EventSaleStore/ID-9447",
       "max_pages": 4,
       "scan_interval_minutes": 5,
       "priority": 10,
@@ -316,7 +316,7 @@
     {
       "store": "newegg",
       "category_name": "Open Box",
-      "category_url": "https://www.newegg.com/Open-Box",
+      "category_url": "https://www.newegg.com/p/pl?N=4809",
       "max_pages": 5,
       "scan_interval_minutes": 5,
       "priority": 9,
@@ -366,7 +366,7 @@
     {
       "store": "microcenter",
       "category_name": "Clearance Sale",
-      "category_url": "https://www.microcenter.com/site/products/clearance-sale.aspx",
+      "category_url": "https://www.microcenter.com/search/search_results.aspx?N=4294966996&NTK=all&sortby=match&rpp=96&myStore=false",
       "max_pages": 5,
       "scan_interval_minutes": 5,
       "priority": 10,

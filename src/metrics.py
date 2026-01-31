@@ -35,6 +35,45 @@ scan_blocks = Counter(
     ["store", "block_type"],  # captcha, 403, 429, cloudflare
 )
 
+# Error trend metrics
+http_errors_total = Counter(
+    "http_errors_total",
+    "Total HTTP errors by status code",
+    ["store", "status_code"],  # 403, 404, 503, etc.
+)
+
+# Proxy health metrics
+proxy_403_failures_total = Counter(
+    "proxy_403_failures_total",
+    "Total 403 failures per proxy",
+    ["proxy_id"],
+)
+
+proxy_consecutive_403s = Gauge(
+    "proxy_consecutive_403s",
+    "Current consecutive 403 failures for proxy",
+    ["proxy_id"],
+)
+
+proxy_cooldown_active = Gauge(
+    "proxy_cooldown_active",
+    "Whether proxy is in cooldown (1 = yes, 0 = no)",
+    ["proxy_id"],
+)
+
+# Selector failure metrics
+selector_failures_total = Counter(
+    "selector_failures_total",
+    "Total selector failures (0 products parsed)",
+    ["store", "reason"],  # stale_selector, js_rendered, unknown
+)
+
+headless_fallback_attempts = Counter(
+    "headless_fallback_attempts_total",
+    "Total headless browser fallback attempts",
+    ["store", "success"],  # success = true/false
+)
+
 active_scans = Gauge(
     "active_category_scans",
     "Currently running category scans",
@@ -258,6 +297,13 @@ db_queries_total = Counter(
     ["operation"],
 )
 
+# Encryption/Decryption metrics
+decryption_failures_total = Counter(
+    "decryption_failures_total",
+    "Total number of decryption failures",
+    ["exception_type"],
+)
+
 # Webhook metrics
 webhook_requests_total = Counter(
     "webhook_requests_total",
@@ -418,3 +464,229 @@ def record_fetch_fallback(store: str, from_strategy: str, to_strategy: str):
     fetch_strategy_fallback.labels(
         store=store, from_strategy=from_strategy, to_strategy=to_strategy
     ).inc()
+
+
+# =============================================================================
+# Error Trend Helper Functions
+# =============================================================================
+
+def record_http_error(store: str, status_code: int):
+    """Record an HTTP error by status code."""
+    http_errors_total.labels(store=store, status_code=str(status_code)).inc()
+
+
+# =============================================================================
+# Proxy Health Helper Functions
+# =============================================================================
+
+def record_proxy_403_failure(proxy_id: int):
+    """Record a 403 failure for a proxy."""
+    proxy_403_failures_total.labels(proxy_id=str(proxy_id)).inc()
+
+
+def update_proxy_consecutive_403s(proxy_id: int, count: int):
+    """Update consecutive 403 failures for a proxy."""
+    proxy_consecutive_403s.labels(proxy_id=str(proxy_id)).set(count)
+
+
+def update_proxy_cooldown(proxy_id: int, in_cooldown: bool):
+    """Update proxy cooldown status."""
+    proxy_cooldown_active.labels(proxy_id=str(proxy_id)).set(1 if in_cooldown else 0)
+
+
+# =============================================================================
+# Selector Failure Helper Functions
+# =============================================================================
+
+def record_selector_failure(store: str, reason: str):
+    """Record a selector failure (0 products parsed)."""
+    selector_failures_total.labels(store=store, reason=reason).inc()
+
+
+def record_headless_fallback(store: str, success: bool):
+    """Record a headless browser fallback attempt."""
+    headless_fallback_attempts.labels(store=store, success="true" if success else "false").inc()
+
+
+# =============================================================================
+# Encryption/Decryption Helper Functions
+# =============================================================================
+
+def record_decryption_failure(exception_type: str):
+    """Record a decryption failure."""
+    decryption_failures_total.labels(exception_type=exception_type).inc()
+
+
+# =============================================================================
+# AI/LLM Metrics
+# =============================================================================
+
+# Embedding metrics
+embedding_generation_latency = Histogram(
+    "embedding_generation_latency_seconds",
+    "Time to generate embeddings",
+    ["model_name"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0],
+)
+
+embedding_generation_total = Counter(
+    "embedding_generation_total",
+    "Total number of embeddings generated",
+    ["model_name", "batch"],
+)
+
+embedding_cache_hits = Counter(
+    "embedding_cache_hits_total",
+    "Embedding cache hits",
+)
+
+embedding_cache_misses = Counter(
+    "embedding_cache_misses_total",
+    "Embedding cache misses",
+)
+
+# LLM metrics
+llm_calls_total = Counter(
+    "llm_calls_total",
+    "Total number of LLM API calls",
+    ["model_name", "task_type"],  # task_type: anomaly_review, attribute_extraction, etc.
+)
+
+llm_call_latency = Histogram(
+    "llm_call_latency_seconds",
+    "LLM API call latency",
+    ["model_name", "task_type"],
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+)
+
+llm_cost_usd = Counter(
+    "llm_cost_usd_total",
+    "Total LLM API cost in USD",
+    ["model_name"],
+)
+
+llm_cache_hits = Counter(
+    "llm_cache_hits_total",
+    "LLM cache hits",
+    ["model_name"],
+)
+
+llm_cache_misses = Counter(
+    "llm_cache_misses_total",
+    "LLM cache misses",
+    ["model_name"],
+)
+
+llm_errors_total = Counter(
+    "llm_errors_total",
+    "Total LLM API errors",
+    ["model_name", "error_type"],
+)
+
+# Product matching metrics
+product_matching_attempts = Counter(
+    "product_matching_attempts_total",
+    "Total product matching attempts",
+)
+
+product_matches_found = Counter(
+    "product_matches_found_total",
+    "Total product matches found",
+    ["similarity_tier"],  # 0.85-0.9, 0.9-0.95, 0.95+
+)
+
+product_matching_latency = Histogram(
+    "product_matching_latency_seconds",
+    "Product matching query latency",
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.0],
+)
+
+# Attribute extraction metrics
+attribute_extraction_attempts = Counter(
+    "attribute_extraction_attempts_total",
+    "Total attribute extraction attempts",
+    ["method"],  # ner, rule, llm
+)
+
+attribute_extraction_success = Counter(
+    "attribute_extraction_success_total",
+    "Successful attribute extractions",
+    ["method", "attribute_type"],  # attribute_type: brand, model, size, etc.
+)
+
+attribute_extraction_latency = Histogram(
+    "attribute_extraction_latency_seconds",
+    "Attribute extraction latency",
+    ["method"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0],
+)
+
+
+# =============================================================================
+# AI/LLM Helper Functions
+# =============================================================================
+
+def record_embedding_generation(model_name: str, latency: float, batch_size: int = 1):
+    """Record embedding generation."""
+    embedding_generation_latency.labels(model_name=model_name).observe(latency)
+    embedding_generation_total.labels(model_name=model_name, batch=str(batch_size > 1)).inc(batch_size)
+
+
+def record_embedding_cache_hit():
+    """Record an embedding cache hit."""
+    embedding_cache_hits.inc()
+
+
+def record_embedding_cache_miss():
+    """Record an embedding cache miss."""
+    embedding_cache_misses.inc()
+
+
+def record_llm_call(model_name: str, task_type: str, latency: float, cost: float = 0.0):
+    """Record an LLM API call."""
+    llm_calls_total.labels(model_name=model_name, task_type=task_type).inc()
+    llm_call_latency.labels(model_name=model_name, task_type=task_type).observe(latency)
+    if cost > 0:
+        llm_cost_usd.labels(model_name=model_name).inc(cost)
+
+
+def record_llm_cache_hit(model_name: str):
+    """Record an LLM cache hit."""
+    llm_cache_hits.labels(model_name=model_name).inc()
+
+
+def record_llm_cache_miss(model_name: str):
+    """Record an LLM cache miss."""
+    llm_cache_misses.labels(model_name=model_name).inc()
+
+
+def record_llm_error(model_name: str, error_type: str):
+    """Record an LLM API error."""
+    llm_errors_total.labels(model_name=model_name, error_type=error_type).inc()
+
+
+def record_product_matching(latency: float, matches_found: int, similarity_scores: list[float]):
+    """Record product matching results."""
+    product_matching_attempts.inc()
+    product_matching_latency.observe(latency)
+    
+    for score in similarity_scores:
+        if score >= 0.95:
+            tier = "0.95+"
+        elif score >= 0.9:
+            tier = "0.9-0.95"
+        elif score >= 0.85:
+            tier = "0.85-0.9"
+        else:
+            tier = "<0.85"
+        product_matches_found.labels(similarity_tier=tier).inc()
+
+
+def record_attribute_extraction(method: str, latency: float, success: bool, attributes_found: list[str] = None):
+    """Record attribute extraction attempt."""
+    attribute_extraction_attempts.labels(method=method).inc()
+    attribute_extraction_latency.labels(method=method).observe(latency)
+    
+    if success and attributes_found:
+        for attr_type in attributes_found:
+            attribute_extraction_success.labels(method=method, attribute_type=attr_type).inc()

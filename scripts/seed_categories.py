@@ -29,13 +29,41 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import httpx
 from sqlalchemy import select
 from src.db.session import AsyncSessionLocal
 from src.db.models import StoreCategory
 
 
-async def seed_categories():
-    """Seed store categories from JSON file."""
+async def validate_url(url: str, timeout: float = 10.0) -> tuple[bool, str]:
+    """
+    Validate that a URL is accessible.
+    
+    Returns:
+        (is_valid, error_message)
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            response = await client.get(url)
+            if response.status_code == 404:
+                return False, "404 Not Found"
+            elif response.status_code >= 400:
+                return False, f"HTTP {response.status_code}"
+            return True, ""
+    except httpx.TimeoutException:
+        return False, "Timeout"
+    except httpx.ConnectError:
+        return False, "Connection error"
+    except Exception as e:
+        return False, str(e)
+
+
+async def seed_categories(validate_urls: bool = False):
+    """Seed store categories from JSON file.
+    
+    Args:
+        validate_urls: If True, validate URLs before seeding (slower but catches stale URLs)
+    """
     seed_file = Path(__file__).parent.parent / "categories_seed.json"
     
     if not seed_file.exists():
@@ -81,6 +109,19 @@ async def seed_categories():
                         print(f"  [ERROR] Category {idx}: 'enabled' field must be a boolean (true or false)")
                         errors += 1
                         continue
+                    
+                    # Optional URL validation
+                    if validate_urls:
+                        url = cat["category_url"]
+                        is_valid, error_msg = await validate_url(url)
+                        if not is_valid:
+                            print(f"  [WARN] Category {idx}: URL validation failed: {error_msg}")
+                            print(f"         URL: {url}")
+                            response = input("         Continue anyway? (y/N): ")
+                            if response.lower() != 'y':
+                                print(f"  [SKIP] {cat['store']}: {cat['category_name']} (URL validation failed)")
+                                skipped += 1
+                                continue
                     
                     # Check if category already exists
                     query = select(StoreCategory).where(
@@ -185,13 +226,16 @@ if __name__ == "__main__":
             asyncio.run(list_categories())
         elif sys.argv[1] == "--clear":
             asyncio.run(clear_categories())
+        elif sys.argv[1] == "--validate":
+            asyncio.run(seed_categories(validate_urls=True))
         elif sys.argv[1] == "--help":
             print("Usage: python seed_categories.py [OPTIONS]")
             print("")
             print("Options:")
-            print("  --list   List all stored categories")
-            print("  --clear  Clear all categories")
-            print("  --help   Show this help message")
+            print("  --list      List all stored categories")
+            print("  --clear     Clear all categories")
+            print("  --validate  Validate URLs before seeding (interactive)")
+            print("  --help      Show this help message")
             print("")
             print("With no options, seeds categories from categories_seed.json")
         else:

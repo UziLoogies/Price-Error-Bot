@@ -94,7 +94,7 @@ class WebhookManager:
     
     async def _get_enabled_webhooks(self, db: AsyncSession) -> List[Webhook]:
         """Get all enabled webhooks."""
-        query = select(Webhook).where(Webhook.enabled == True)
+        query = select(Webhook).where(Webhook.enabled.is_(True))
         result = await db.execute(query)
         return list(result.scalars().all())
     

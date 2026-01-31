@@ -67,7 +67,10 @@ def upgrade() -> None:
     op.add_column('webhooks', sa.Column('headers', sa.Text(), nullable=True))
     op.add_column('webhooks', sa.Column('filters', sa.Text(), nullable=True))
     op.add_column('webhooks', sa.Column('telegram_chat_id', sa.String(64), nullable=True))
-    op.add_column('webhooks', sa.Column('telegram_bot_token', sa.String(128), nullable=True))
+    # Store encrypted token (use larger size for base64-encoded encrypted data)
+    op.add_column('webhooks', sa.Column('telegram_bot_token', sa.String(512), nullable=True))
+    # Note: Application should encrypt/decrypt this field using EncryptedString type
+    # The actual encryption key should be stored in ENCRYPTION_KEY environment variable
     op.add_column('webhooks', sa.Column('last_sent_at', sa.DateTime(), nullable=True))
     op.add_column('webhooks', sa.Column('send_count', sa.Integer(), nullable=False, server_default='0'))
     op.add_column('webhooks', sa.Column('error_count', sa.Integer(), nullable=False, server_default='0'))

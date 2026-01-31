@@ -168,6 +168,51 @@ class TaskRunner:
                     # Product exists - enhance deal with anomaly detection using history
                     deal = await enhance_deal_with_anomaly(deal, db)
                     
+                    # Update structured attributes if title changed or attributes missing
+                    if settings.ai_attribute_extraction_enabled and product_data.title:
+                        if not existing.structured_attributes or existing.title != product_data.title:
+                            try:
+                                from src.ai.attribute_extractor import attribute_extractor
+                                from src.db.models import ProductAttributes
+                                
+                                attributes = await attribute_extractor.extract_attributes(
+                                    title=product_data.title,
+                                    description=None,
+                                    use_llm=settings.ai_attribute_extraction_enabled,
+                                )
+                                
+                                if attributes:
+                                    existing.structured_attributes = attributes
+                                    
+                                    # Update or create ProductAttributes record
+                                    attrs_query = select(ProductAttributes).where(
+                                        ProductAttributes.product_id == existing.id
+                                    )
+                                    attrs_result = await db.execute(attrs_query)
+                                    product_attrs = attrs_result.scalar_one_or_none()
+                                    
+                                    if product_attrs:
+                                        product_attrs.brand = attributes.get("brand")
+                                        product_attrs.model = attributes.get("model")
+                                        product_attrs.size = attributes.get("size")
+                                        product_attrs.color = attributes.get("color")
+                                        product_attrs.category = attributes.get("category")
+                                        product_attrs.raw_attributes = attributes
+                                    else:
+                                        product_attrs = ProductAttributes(
+                                            product_id=existing.id,
+                                            brand=attributes.get("brand"),
+                                            model=attributes.get("model"),
+                                            size=attributes.get("size"),
+                                            color=attributes.get("color"),
+                                            category=attributes.get("category"),
+                                            extraction_method="rule",
+                                            raw_attributes=attributes,
+                                        )
+                                        db.add(product_attrs)
+                            except Exception as e:
+                                logger.warning(f"Failed to update attributes for product {existing.id}: {e}")
+                    
                     # Record price observation for baseline tracking
                     await baseline_calculator.update_baseline(
                         db,
@@ -193,6 +238,37 @@ class TaskRunner:
                 )
                 db.add(new_product)
                 await db.flush()
+                
+                # Extract and store structured attributes if enabled
+                if settings.ai_attribute_extraction_enabled and product_data.title:
+                    try:
+                        from src.ai.attribute_extractor import attribute_extractor
+                        from src.db.models import ProductAttributes
+                        
+                        attributes = attribute_extractor.extract_attributes(
+                            title=product_data.title,
+                            description=None,
+                            use_llm=settings.ai_attribute_extraction_enabled,
+                        )
+                        
+                        if attributes:
+                            # Store in structured_attributes JSONB column
+                            new_product.structured_attributes = attributes
+                            
+                            # Also create ProductAttributes record
+                            product_attrs = ProductAttributes(
+                                product_id=new_product.id,
+                                brand=attributes.get("brand"),
+                                model=attributes.get("model"),
+                                size=attributes.get("size"),
+                                color=attributes.get("color"),
+                                category=attributes.get("category"),
+                                extraction_method="rule",  # or "llm" if LLM was used
+                                raw_attributes=attributes,
+                            )
+                            db.add(product_attrs)
+                    except Exception as e:
+                        logger.warning(f"Failed to extract attributes for product {new_product.id}: {e}")
 
                 # Add initial price history
                 price_history = PriceHistory(
@@ -203,6 +279,16 @@ class TaskRunner:
                 )
                 db.add(price_history)
                 await db.commit()
+                
+                # Generate and store embedding for semantic matching (async, don't block)
+                if settings.ai_product_matching_enabled and settings.vector_db_enabled:
+                    try:
+                        from src.ai.product_matcher import product_matcher
+                        await product_matcher.store_embedding(db, new_product)
+                        await db.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for product {new_product.id}: {e}")
+                        # Don't fail the whole operation if embedding fails
 
                 logger.info(
                     f"Added discovered deal: {product_data.title[:50] if product_data.title else 'N/A'} "

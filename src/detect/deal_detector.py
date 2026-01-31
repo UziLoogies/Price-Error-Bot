@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional, List, Dict
 
+from src.ai.product_matcher import product_matcher
+from src.config import settings
 from src.ingest.category_scanner import DiscoveredProduct
 
 logger = logging.getLogger(__name__)
@@ -730,6 +732,93 @@ async def detect_deals_with_anomaly(
         if deal and deal.confidence >= min_confidence:
             # Enhance with anomaly detection
             deal = await enhance_deal_with_anomaly(deal, db)
+            
+            # Enhance with AI features if enabled
+            if settings.ai_product_matching_enabled or settings.ai_attribute_extraction_enabled:
+                try:
+                    # Cross-store price comparison using embeddings
+                    if settings.ai_product_matching_enabled and product.title:
+                        from src.db.models import Product as ProductModel
+                        from sqlalchemy import select
+                        
+                        # Create a temporary Product object for matching
+                        temp_product = ProductModel(
+                            sku=product.sku,
+                            store=product.store,
+                            title=product.title,
+                            baseline_price=product.current_price,
+                        )
+                        temp_product.id = 0  # Temporary ID
+                        
+                        # Find similar products in other stores
+                        similar_products = await product_matcher.find_similar_products(
+                            db=db,
+                            product=temp_product,
+                            threshold=settings.similarity_threshold,
+                            limit=5,
+                            exclude_same_store=True,
+                        )
+                        
+                        # Compare prices with similar products
+                        if similar_products:
+                            for match in similar_products:
+                                if match.similarity_score > 0.9:  # Very similar
+                                    # Get actual product from DB
+                                    product_query = select(ProductModel).where(
+                                        ProductModel.id == match.product_id
+                                    )
+                                    result = await db.execute(product_query)
+                                    matched_product = result.scalar_one_or_none()
+                                    
+                                    if matched_product and matched_product.baseline_price:
+                                        price_diff = float(product.current_price - matched_product.baseline_price)
+                                        if price_diff < -10:  # Current price is $10+ cheaper
+                                            deal.confidence = min(1.0, deal.confidence + 0.1)
+                                            deal.reason += f" | Cross-store: ${abs(price_diff):.2f} cheaper than {match.store}"
+                    
+                    # Use structured attributes for better matching
+                    if settings.ai_attribute_extraction_enabled and product.title:
+                        from src.ai.attribute_extractor import attribute_extractor
+                        attributes = await attribute_extractor.extract_attributes(
+                            title=product.title,
+                            description=None,
+                            use_llm=False,  # Fast rule-based extraction
+                        )
+                        if attributes.get("brand") or attributes.get("model"):
+                            # Structured attributes found - boost confidence slightly
+                            deal.confidence = min(1.0, deal.confidence + 0.05)
+                except Exception as e:
+                    logger.warning(f"AI enhancement failed for deal: {e}")
+            
+            # LLM validation for high-value deals (optional, expensive)
+            if settings.ai_llm_review_enabled and deal.discount_percent >= 70 and deal.current_price > 100:
+                try:
+                    from src.ai.llm_anomaly_reviewer import llm_anomaly_reviewer
+                    from src.db.models import Product as ProductModel
+                    
+                    # Create temporary product for LLM review
+                    temp_product = ProductModel(
+                        sku=product.sku,
+                        store=product.store,
+                        title=product.title,
+                        baseline_price=product.current_price,
+                        msrp=product.msrp,
+                    )
+                    
+                    # Simple validation (would need full AnomalyResult for full review)
+                    is_valid = await llm_anomaly_reviewer.validate_anomaly({
+                        "description": f"{product.title} at ${product.current_price:.2f} ({deal.discount_percent:.1f}% off)",
+                        "price": float(product.current_price),
+                        "score": deal.confidence,
+                    })
+                    
+                    if not is_valid:
+                        logger.info(f"LLM rejected deal for {product.sku}: likely not a price error")
+                        continue  # Skip this deal
+                except Exception as e:
+                    logger.warning(f"LLM validation failed: {e}")
+                    # Continue without LLM validation if it fails
+            
             deals.append(deal)
     
     # Sort by combined score (considers both confidence and anomaly)

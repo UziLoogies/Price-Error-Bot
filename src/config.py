@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # Scan Engine Performance Settings
     max_parallel_category_scans: int = 8  # Number of categories to scan in parallel
     max_parallel_pages_per_category: int = 2  # Number of pages to scan in parallel per category
+    # Amazon-specific: reduced concurrency due to aggressive anti-bot protection
+    amazon_max_parallel_pages: int = 1  # Reduced from 2 for Amazon
     min_page_delay_seconds: float = 1.0  # Minimum delay between page requests
     max_page_delay_seconds: float = 3.0  # Maximum delay between page requests
     db_batch_update_size: int = 10  # Number of category updates to batch before committing
@@ -52,7 +54,7 @@ class Settings(BaseSettings):
     # Session Management
     session_storage_path: str = "data/sessions"
     headless_browser_timeout: int = 30
-    category_request_timeout: float = 45.0
+    category_request_timeout: float = 60.0  # Increased from 45s to 60s for better reliability
 
     # Retailer-specific rate limits (seconds between requests)
     retailer_rate_limits: dict[str, dict] = {
@@ -81,6 +83,7 @@ class Settings(BaseSettings):
 
     # Category scan error handling
     category_disable_on_404: bool = True
+    category_max_consecutive_blocks: int = 3  # Auto-disable after N consecutive blocked occurrences
     category_error_cooldowns: dict[str, int] = {
         "HTTP 403": 8 * 60 * 60,  # Increased from 6 to 8 hours for persistent failures
         "HTTP 429": 60 * 60,
@@ -136,6 +139,77 @@ class Settings(BaseSettings):
     # ==========================================================================
     content_analysis_enabled: bool = True
     min_expected_products: int = 1           # Minimum products expected on valid page
+    
+    # ==========================================================================
+    # Error Handling Configuration
+    # ==========================================================================
+    # Retry limits per error type
+    max_retries_403: int = 3                 # Max retries for 403 errors
+    max_retries_404: int = 0                 # No retries for 404 (immediate fail)
+    max_retries_503: int = 3                 # Max retries for 503 errors
+    max_retries_timeout: int = 3             # Max retries for timeout errors
+    
+    # Proxy cooldown settings
+    proxy_cooldown_minutes: int = 20         # Cooldown duration after 403 (15-30 min range)
+    proxy_max_consecutive_403s: int = 3      # Disable proxy after N consecutive 403s
+    
+    # Headless browser fallback per store (store -> enabled)
+    headless_fallback_enabled: dict[str, bool] = {
+        "amazon_us": True,
+        "walmart": True,
+        "target": True,
+        "bestbuy": False,  # Usually works with static HTML
+        "costco": True,
+        "newegg": True,
+        "homedepot": False,
+        "lowes": False,
+    }
+
+    # ==========================================================================
+    # AI & LLM Configuration
+    # ==========================================================================
+    # OpenAI API
+    openai_api_key: str = ""
+    
+    # Embedding Models
+    embedding_model: str = "sentence-transformers/all-mpnet-base-v2"  # Default generic model
+    retail_embedding_model: str = "Ionio-ai/retail_embedding_classifier_v1"  # Retail-specific (Ionio)
+    use_retail_embedding: bool = True  # Use retail-specific model if available, fallback to generic
+    
+    # Vector Database
+    vector_db_enabled: bool = True
+    similarity_threshold: float = 0.85  # Cosine similarity threshold for product matching
+    
+    # LLM Provider Settings
+    llm_provider: str = "openai"  # Provider selection: "openai", "anthropic", etc.
+    llm_model: str = "gpt-4-turbo-preview"  # Model selection
+    llm_temperature: float = 0.3  # Temperature for LLM calls (lower = more deterministic)
+    llm_max_tokens: int = 2000  # Maximum tokens in LLM response
+    llm_timeout_seconds: float = 30.0  # Timeout for LLM API calls
+    
+    # LLM Caching
+    llm_cache_enabled: bool = True
+    llm_cache_ttl_seconds: int = 3600  # Cache TTL for LLM responses (1 hour)
+    
+    # Embedding Settings
+    embedding_batch_size: int = 32  # Batch size for embedding generation
+    embedding_cache_enabled: bool = True
+    embedding_cache_ttl_hours: int = 24  # Cache embeddings for 24 hours
+    
+    # Feature Flags
+    ai_product_matching_enabled: bool = True
+    ai_anomaly_detection_enabled: bool = True
+    ai_attribute_extraction_enabled: bool = True
+    ai_llm_review_enabled: bool = True  # Enable LLM review for anomalies
+    ai_llm_review_threshold: float = 0.7  # Only review anomalies with score >= this threshold
+    
+    # NLP Pipeline
+    spacy_model: str = "en_core_web_sm"  # spaCy model for NER (install separately)
+    enable_ner: bool = True  # Enable Named Entity Recognition
+    
+    # Cost Tracking
+    track_llm_costs: bool = True  # Track LLM API costs
+    llm_cost_limit_per_day: float = 100.0  # Daily cost limit in USD
 
     model_config = SettingsConfigDict(
         env_file=".env",

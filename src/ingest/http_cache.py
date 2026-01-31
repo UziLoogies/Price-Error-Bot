@@ -240,11 +240,19 @@ class HTTPCache:
         try:
             redis_client = await self._get_redis()
             
-            # Count cache entries
-            keys = await redis_client.keys("http_cache:*")
+            # Count cache entries using SCAN (non-blocking) instead of KEYS
+            count = 0
+            cursor = 0
+            pattern = "http_cache:*"
+            
+            while True:
+                cursor, keys = await redis_client.scan(cursor, match=pattern, count=100)
+                count += len(keys)
+                if cursor == 0:
+                    break
             
             return {
-                "cached_urls": len(keys),
+                "cached_urls": count,
                 "ttl_seconds": self.ttl,
                 "enabled": settings.http_cache_enabled,
             }

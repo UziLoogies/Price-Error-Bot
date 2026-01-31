@@ -188,7 +188,7 @@ def format_slack_blocks(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"{deal.discount_percent:.0f}% OFF - {product.title or 'Product Deal'}"[:150],
+                "text": f"{emoji} {deal.discount_percent:.0f}% OFF - {product.title or 'Product Deal'}"[:150],
                 "emoji": True,
             },
         },

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Product, PriceHistory, ProductBaselineCache
 from src.db.session import AsyncSessionLocal
+from src.utils.model_loader import load_model_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -239,18 +240,16 @@ class IsolationForestTrainer:
         """
         Load model from disk.
         
+        Uses shared utility function for consistent security validation
+        and error handling. Model files must be from trusted sources only.
+        
         Returns:
             True if loaded successfully
         """
-        if not self.model_path.exists():
-            return False
-        
         try:
-            with open(self.model_path, "rb") as f:
-                self._model = pickle.load(f)
-            logger.info(f"Model loaded from {self.model_path}")
+            self._model = load_model_with_fallback(self.model_path)
             return True
-        except Exception as e:
+        except (FileNotFoundError, ValueError, RuntimeError) as e:
             logger.error(f"Failed to load model: {e}")
             return False
     

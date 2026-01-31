@@ -272,6 +272,10 @@ class FallbackFetcher:
         logger.warning(
             f"All {len(strategies)} strategies failed for {store} ({url})"
         )
+        # Return last_result if available (preserves error details from last attempt)
+        if last_result is not None:
+            return last_result
+        # Fallback to generic result only if no strategies were attempted
         return FetchResult(
             success=False,
             html=None,

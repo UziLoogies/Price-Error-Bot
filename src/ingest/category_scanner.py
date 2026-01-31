@@ -20,19 +20,32 @@ from src.ingest.rate_limiter import rate_limiter
 from src.ingest.content_analyzer import content_analyzer
 from src.ingest.http_cache import http_cache
 from src.ingest.store_health import store_health
+from src.ingest.http_client import (
+    fetch_with_policy,
+    get_policy_for_store,
+    BlockedError,
+    PermanentURLError,
+    RateLimitedError,
+    TransientFetchError,
+)
+from src.ingest.json_extractor import extract_products_from_json
 from src.config import settings
 from src import metrics
 
 logger = logging.getLogger(__name__)
 
-# User agents for rotation
+# User agents for rotation - updated with current browser versions
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
 ]
 
 # Common bot/blocked page indicators (lowercase match)
@@ -1820,7 +1833,7 @@ class CategoryScanner:
                 if settings.adaptive_rate_limiting_enabled:
                     await rate_limiter.acquire_adaptive(store)
                 else:
-                await rate_limiter.acquire_with_interval(domain, 10, 20, 5)
+                    await rate_limiter.acquire_with_interval(domain, 10, 20, 5)
                 
                 # Track request timing for store health
                 request_start_time = time.monotonic()
@@ -1828,131 +1841,23 @@ class CategoryScanner:
                 # Get conditional headers for caching
                 conditional_headers = await http_cache.get_conditional_headers(url)
                 
-                # Fetch page with retry logic
+                # Get site policy for this store
+                policy = get_policy_for_store(store)
+                
+                # Fetch page with policy-based retry logic
                 client = await self._get_client(domain, proxy, user_agent=current_user_agent, read_timeout=read_timeout)
                 try:
-                    response = await client.get(url, headers=conditional_headers if conditional_headers else None)
+                    # Build headers: merge conditional headers with user agent
+                    headers = {}
+                    if conditional_headers:
+                        headers.update(conditional_headers)
+                    if current_user_agent:
+                        headers["User-Agent"] = current_user_agent
                     
-                    # Check for specific HTTP errors that should trigger retry
-                    if response.status_code == 403:
-                        proxy_info = f" (proxy: {proxy.host}:{proxy.port})" if proxy else " (no proxy)"
-                        logger.warning(
-                            f"403 Forbidden for {store} page {page_num} "
-                            f"(attempt {retry_count + 1}/{max_retries}, "
-                            f"UA: {current_user_agent[:50]}...){proxy_info}"
-                        )
-                        if proxy:
-                            used_proxies.add(proxy.id)
-                            await proxy_rotator.report_failure(proxy.id)
-                        if retry_count < max_retries - 1:
-                            retry_count += 1
-                            # Increased backoff for 403 errors
-                            wait_time = (2 ** retry_count) * 15 + random.uniform(5, 15)
-                            logger.debug(f"Retrying with different proxy and user agent in {wait_time:.1f}s...")
-                            await asyncio.sleep(wait_time)
-                            # Reset timeout for next attempt
-                            read_timeout = settings.category_request_timeout
-                            has_timeout_error = False
-                            continue
-                        else:
-                            logger.error(
-                                f"Failed to access {store} after {max_retries} attempts (403 Forbidden)"
-                            )
-                            last_error = "HTTP 403 Forbidden"
-                            response.raise_for_status()
+                    # Use policy-based fetch (handles retries, status codes, etc.)
+                    response = await fetch_with_policy(client, url, policy, headers=headers if headers else None)
                     
-                    if response.status_code == 503:
-                        logger.warning(
-                            f"503 Service Unavailable for {store} page {page_num} "
-                            f"(attempt {retry_count + 1}/{max_retries})"
-                        )
-                        if retry_count < max_retries - 1:
-                            retry_count += 1
-                            wait_time = (2 ** retry_count) * 10 + random.uniform(0, 5)
-                            logger.debug(f"Retrying in {wait_time:.1f}s...")
-                            await asyncio.sleep(wait_time)
-                            read_timeout = settings.category_request_timeout
-                            has_timeout_error = False
-                            continue
-                        else:
-                            logger.error(f"Failed to access {store} after {max_retries} attempts (503 Service Unavailable)")
-                            last_error = "HTTP 503 Service Unavailable"
-                            response.raise_for_status()
-
-                    if response.status_code == 429:
-                        logger.warning(
-                            f"HTTP 429 Too Many Requests for {store} page {page_num} "
-                            f"(attempt {retry_count + 1}/{max_retries})"
-                        )
-                        if retry_count < max_retries - 1:
-                            retry_count += 1
-                            
-                            # Try to read Retry-After header
-                            retry_seconds = None
-                            retry_after = response.headers.get("Retry-After")
-                            if retry_after:
-                                try:
-                                    # Try parsing as numeric seconds first
-                                    retry_seconds = float(retry_after)
-                                except ValueError:
-                                    try:
-                                        # Try parsing as HTTP-date
-                                        retry_date = parsedate_to_datetime(retry_after)
-                                        now = datetime.now(timezone.utc)
-                                        retry_seconds = (retry_date - now).total_seconds()
-                                        if retry_seconds < 0:
-                                            retry_seconds = None
-                                    except (ValueError, TypeError):
-                                        # Invalid format, will fall back to exponential backoff
-                                        retry_seconds = None
-                            
-                            # Calculate exponential backoff fallback
-                            backoff = (2 ** retry_count) * 8 + random.uniform(0, 5)
-                            
-                            # Use Retry-After if available, otherwise use backoff
-                            # Take max of both to ensure we respect server's request
-                            if retry_seconds is not None:
-                                wait_time = max(retry_seconds, backoff)
-                                logger.debug(f"Retry-After header: {retry_after}, parsed: {retry_seconds:.1f}s, using: {wait_time:.1f}s")
-                            else:
-                                wait_time = backoff
-                                logger.debug(f"No valid Retry-After header, using exponential backoff: {wait_time:.1f}s")
-                            
-                            # Cap wait time to a reasonable maximum (5 minutes)
-                            wait_time = min(wait_time, 300.0)
-                            
-                            logger.debug(f"Retrying in {wait_time:.1f}s...")
-                            await asyncio.sleep(wait_time)
-                            read_timeout = settings.category_request_timeout
-                            has_timeout_error = False
-                            continue
-                        else:
-                            logger.error(f"Failed to access {store} after {max_retries} attempts (HTTP 429 Too Many Requests)")
-                            last_error = "HTTP 429 Too Many Requests"
-                            response.raise_for_status()
-                    
-                    if response.status_code in (500, 502, 504):
-                        logger.warning(
-                            f"HTTP {response.status_code} for {store} page {page_num} "
-                            f"(attempt {retry_count + 1}/{max_retries})"
-                        )
-                        if retry_count < max_retries - 1:
-                            retry_count += 1
-                            wait_time = (2 ** retry_count) * 8 + random.uniform(0, 5)
-                            logger.debug(f"Retrying in {wait_time:.1f}s...")
-                            await asyncio.sleep(wait_time)
-                            read_timeout = settings.category_request_timeout
-                            has_timeout_error = False
-                            continue
-                        else:
-                            logger.error(f"Failed to access {store} after {max_retries} attempts (HTTP {response.status_code})")
-                            last_error = f"HTTP {response.status_code} Server Error"
-                            response.raise_for_status()
-                    
-                    # For other status codes, raise immediately
-                    response.raise_for_status()
-                    
-                    # Calculate request duration for store health
+                    # Success - process response
                     request_duration_ms = (time.monotonic() - request_start_time) * 1000
                     
                     # Handle 304 Not Modified (cached content)
@@ -1967,10 +1872,11 @@ class CategoryScanner:
                             logger.warning(f"304 response but no cached content for {url}")
                             metrics.record_cache_miss(store)
                             # Re-fetch without conditional headers
-                            response = await client.get(url)
-                    response.raise_for_status()
-                    html = response.text
+                            headers_no_conditional = {"User-Agent": current_user_agent} if current_user_agent else None
+                            response = await fetch_with_policy(client, url, policy, headers=headers_no_conditional)
+                            html = response.text
                     else:
+                        # For non-304 responses, process normally
                         html = response.text
                         metrics.record_cache_miss(store)
                         
@@ -1979,6 +1885,118 @@ class CategoryScanner:
                         last_modified = response.headers.get("Last-Modified")
                         if etag or last_modified:
                             await http_cache.store(url, html, etag, last_modified, store)
+                    
+                    # Record successful request
+                    await store_health.record_request(
+                        store=store,
+                        success=True,
+                        duration_ms=request_duration_ms,
+                        blocked=False,
+                    )
+                    
+                except BlockedError as e:
+                    # Access blocked - don't retry, return clean error
+                    request_duration_ms = (time.monotonic() - request_start_time) * 1000
+                    metrics.record_http_error(store, 403)
+                    proxy_info = f" (proxy: {proxy.host}:{proxy.port})" if proxy else " (no proxy)"
+                    logger.warning(
+                        f"Blocked for {store} page {page_num}: {e}{proxy_info}"
+                    )
+                    if proxy:
+                        await proxy_rotator.report_403_failure(proxy.id)
+                        used_proxies.add(proxy.id)
+                    
+                    await store_health.record_request(
+                        store=store,
+                        success=False,
+                        duration_ms=request_duration_ms,
+                        blocked=True,
+                    )
+                    
+                    blocked_reason = str(e)
+                    return (False, [], None, blocked_reason, None)
+                
+                except PermanentURLError as e:
+                    # 404 - URL is permanently invalid, don't retry
+                    request_duration_ms = (time.monotonic() - request_start_time) * 1000
+                    metrics.record_http_error(store, 404)
+                    logger.warning(
+                        f"404 Not Found for {store} page {page_num} (URL: {url}). "
+                        f"Category URL may be stale or removed."
+                    )
+                    await store_health.record_request(
+                        store=store,
+                        success=False,
+                        duration_ms=request_duration_ms,
+                        status_code=404,
+                        blocked=False,
+                    )
+                    last_error = str(e)
+                    return (False, [], last_error, None, None)
+                
+                except RateLimitedError as e:
+                    # Rate limited - retry with backoff if we have attempts left
+                    request_duration_ms = (time.monotonic() - request_start_time) * 1000
+                    metrics.record_http_error(store, 429)
+                    logger.warning(
+                        f"Rate limited (429) for {store} page {page_num} "
+                        f"(attempt {retry_count + 1}/{max_retries})"
+                    )
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        # Use Retry-After if available, otherwise exponential backoff
+                        if e.retry_after is not None:
+                            wait_time = float(e.retry_after)
+                        else:
+                            wait_time = (2 ** retry_count) * 8 + random.uniform(0, 5)
+                        wait_time = min(wait_time, 300.0)  # Cap at 5 minutes
+                        logger.debug(f"Retrying in {wait_time:.1f}s...")
+                        await asyncio.sleep(wait_time)
+                        read_timeout = settings.category_request_timeout
+                        has_timeout_error = False
+                        continue
+                    else:
+                        last_error = "HTTP 429 Too Many Requests"
+                        logger.error(f"Failed to access {store} after {max_retries} attempts: Rate limited")
+                        await store_health.record_request(
+                            store=store,
+                            success=False,
+                            duration_ms=request_duration_ms,
+                            status_code=429,
+                            blocked=False,
+                        )
+                        return (False, [], last_error, None, None)
+                
+                except TransientFetchError as e:
+                    # Transient error - retry if we have attempts left
+                    request_duration_ms = (time.monotonic() - request_start_time) * 1000
+                    logger.warning(
+                        f"Transient error for {store} page {page_num}: {e} "
+                        f"(attempt {retry_count + 1}/{max_retries})"
+                    )
+                    if proxy:
+                        used_proxies.add(proxy.id)
+                        await proxy_rotator.report_failure(proxy.id, error_type="transient")
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        wait_time = (2 ** retry_count) * 8 + random.uniform(0, 5)
+                        logger.debug(f"Retrying in {wait_time:.1f}s...")
+                        await asyncio.sleep(wait_time)
+                        read_timeout = settings.category_request_timeout
+                        has_timeout_error = False
+                        continue
+                    else:
+                        last_error = str(e)
+                        logger.error(f"Failed to scan {store} after {max_retries} attempts: {e}")
+                        await store_health.record_request(
+                            store=store,
+                            success=False,
+                            duration_ms=request_duration_ms,
+                            blocked=False,
+                        )
+                        return (False, [], last_error, None, None)
+                
+                except httpx.ReadTimeout as e:
                     
                 except httpx.ReadTimeout as e:
                     # Handle ReadTimeout explicitly - increase timeout and try different proxy
@@ -2041,52 +2059,9 @@ class CategoryScanner:
                         logger.error(f"Failed to scan {store} after {max_retries} attempts: ConnectError")
                         return (False, [], last_error, None, None)
                 
-                except httpx.HTTPStatusError as e:
-                    status_code = e.response.status_code
-                    reason = e.response.reason_phrase or "HTTP error"
-                    request_duration_ms = (time.monotonic() - request_start_time) * 1000
-                    
-                    # Record HTTP error in store health
-                    await store_health.record_request(
-                        store=store,
-                        success=False,
-                        duration_ms=request_duration_ms,
-                        status_code=status_code,
-                        blocked=(status_code == 403),
-                    )
-                    
-                    if status_code in (403, 429, 500, 502, 503, 504) and retry_count < max_retries - 1:
-                        retry_count += 1
-                        wait_time_base = 10 if status_code == 503 else 8
-                        wait_time = (2 ** retry_count) * wait_time_base + random.uniform(0, 5)
-                        proxy_info = f" (proxy: {proxy.host}:{proxy.port})" if proxy else ""
-                        logger.warning(
-                            f"HTTP {status_code} error for {store}{proxy_info}, retrying in {wait_time:.1f}s..."
-                        )
-                        if proxy and status_code == 403:
-                            used_proxies.add(proxy.id)
-                            await proxy_rotator.report_failure(proxy.id)
-                        await asyncio.sleep(wait_time)
-                        read_timeout = settings.category_request_timeout
-                        has_timeout_error = False
-                        continue
-                    else:
-                        last_error = f"HTTP {status_code} {reason}"
-                        logger.exception(f"HTTP {status_code} error for {store} category: {e}")
-                        return (False, [], last_error, None, None)
-                
                 # Report proxy success
                 if proxy:
                     await proxy_rotator.report_success(proxy.id)
-                
-                # Record successful request to store health tracker
-                await store_health.record_request(
-                    store=store,
-                    success=True,
-                    duration_ms=request_duration_ms,
-                    status_code=response.status_code,
-                    blocked=False,
-                )
                 
                 # Use content analyzer to check for blocks before parsing
                 analysis = content_analyzer.analyze(html, store)
@@ -2116,15 +2091,36 @@ class CategoryScanner:
                     else:
                         return (False, [], f"Blocked or bot challenge detected", blocked_reason, html)
                 
-                # Parse products
+                # Stage 1: Parse products from HTML using selectors
                 products = parser.parse_category_page(html, url)
                 
                 logger.info(
-                    f"Scanned {store} page {page_num}: found {len(products)} products"
+                    f"Scanned {store} page {page_num}: found {len(products)} products (HTML parsing)"
                     f"{' (proxy: ' + proxy.host + ':' + str(proxy.port) + ')' if proxy else ''}"
                 )
 
+                # Stage 2: If HTML parsing failed, try JSON extraction
                 if not products:
+                    logger.debug(
+                        f"No products from HTML parsing for {store} page {page_num}, trying JSON extraction..."
+                    )
+                    try:
+                        json_products = extract_products_from_json(html)
+                        if json_products:
+                            logger.info(
+                                f"JSON extraction found {len(json_products)} product entries for {store} page {page_num}"
+                            )
+                            # Note: json_products are raw dicts, not DiscoveredProduct objects
+                            # For now, we log but don't convert - this would need store-specific mapping
+                            # TODO: Convert JSON product dicts to DiscoveredProduct objects per store
+                            logger.debug(
+                                f"JSON extraction found products but conversion not yet implemented. "
+                                f"Falling back to headless browser if enabled."
+                            )
+                    except Exception as e:
+                        logger.debug(f"JSON extraction failed for {store} page {page_num}: {e}")
+                    
+                    # Check if this might be a block
                     possible_block = detect_block_reason(html)
                     if possible_block:
                         blocked_reason = possible_block
@@ -2133,7 +2129,7 @@ class CategoryScanner:
                         )
                     else:
                         logger.debug(
-                            f"No products parsed for {store} page {page_num}; selectors may be stale"
+                            f"No products parsed for {store} page {page_num}; selectors may be stale or page is JS-rendered"
                         )
                 
                 return (True, products, None, blocked_reason, html)
@@ -2189,7 +2185,12 @@ class CategoryScanner:
         blocked_reason: Optional[str] = None
         
         # Use parallel page scanning if enabled (simplified approach)
-        max_parallel_pages = getattr(settings, 'max_parallel_pages_per_category', 1)
+        # Amazon gets reduced concurrency due to aggressive anti-bot protection
+        is_amazon_store = store == "amazon_us" or "amazon" in store.lower()
+        if is_amazon_store:
+            max_parallel_pages = getattr(settings, 'amazon_max_parallel_pages', 1)
+        else:
+            max_parallel_pages = getattr(settings, 'max_parallel_pages_per_category', 1)
         parallel_attempted = False
         
         if max_pages > 1 and max_parallel_pages > 1:
@@ -2213,8 +2214,8 @@ class CategoryScanner:
                 client = await self._get_client(domain, proxy)
                 
                 # Get first page to discover pagination
-                response = await client.get(current_url)
-                response.raise_for_status()
+                policy = get_policy_for_store(store)
+                response = await fetch_with_policy(client, current_url, policy)
                 first_page_html = response.text
                 
                 # Parse first page products to avoid re-fetching
@@ -2235,8 +2236,8 @@ class CategoryScanner:
                     if len(page_urls) < max_pages:
                         # Rate limit before fetching next page
                         await rate_limiter.acquire_with_interval(domain, 10, 20, 5)
-                        response = await client.get(next_url)
-                        response.raise_for_status()
+                        policy = get_policy_for_store(store)
+                        response = await fetch_with_policy(client, next_url, policy)
                         html = response.text
             except Exception as e:
                 logger.debug(f"Could not discover all page URLs upfront: {e}, falling back to sequential")
@@ -2349,12 +2350,162 @@ class CategoryScanner:
             raise CategoryScanError(store, category_url, error_message)
         
         if len(all_products) == 0 and not blocked_reason:
+            # Check if page might be JS-rendered and try headless browser fallback
             logger.warning(
-                f"No products parsed for {store} (url: {category_url}). Selectors may be stale or page is JS-rendered."
+                f"No products parsed for {store} (url: {category_url}). "
+                f"Selectors may be stale or page is JS-rendered. Attempting headless fallback..."
             )
+            
+            # Record selector failure metric
+            from src import metrics
+            metrics.record_selector_failure(store, "unknown")
+            
+            # Try headless browser fallback if enabled for this store
+            headless_enabled = settings.headless_fallback_enabled.get(store, False)
+            if (settings.fallback_strategies_enabled and 
+                "headless" in settings.fallback_strategy_order and 
+                headless_enabled):
+                try:
+                    # Get HTML from last successful page fetch to check if JS-rendered
+                    # If we have HTML, check for JS-rendered indicators
+                    is_js_rendered = await self._detect_js_rendered_page(store, category_url)
+                    
+                    if is_js_rendered:
+                        logger.info(f"Detected JS-rendered page for {store}, using headless browser fallback")
+                        metrics.record_selector_failure(store, "js_rendered")
+                        headless_products = await self._try_headless_fallback(store, parser, category_url)
+                        if headless_products:
+                            logger.info(f"Headless fallback found {len(headless_products)} products for {store}")
+                            all_products.extend(headless_products)
+                            metrics.record_headless_fallback(store, True)
+                        else:
+                            logger.warning(f"Headless fallback also found 0 products for {store}")
+                            metrics.record_headless_fallback(store, False)
+                    else:
+                        logger.debug(f"Page does not appear to be JS-rendered, skipping headless fallback")
+                        metrics.record_selector_failure(store, "stale_selector")
+                except Exception as e:
+                    logger.error(f"Headless fallback failed for {store}: {e}")
+                    metrics.record_headless_fallback(store, False)
         
         logger.info(f"Category scan complete: {len(all_products)} products from {store}")
         return all_products
+    
+    async def _detect_js_rendered_page(self, store: str, url: str) -> bool:
+        """
+        Detect if a page is likely JS-rendered by checking for common indicators.
+        
+        Args:
+            store: Store identifier
+            url: URL to check
+            
+        Returns:
+            True if page appears to be JS-rendered
+        """
+        try:
+            # Fetch a small sample of the page to check for JS indicators
+            domain = urlparse(url).netloc
+            client = await self._get_client(domain)
+            
+            # Make a quick HEAD or GET request to check response
+            response = await client.get(url, timeout=10.0)
+            html = response.text[:5000]  # First 5KB should be enough
+            
+            # Check for common JS-rendered page indicators
+            js_indicators = [
+                "enable javascript",
+                "please enable javascript",
+                "javascript is required",
+                "noscript",
+                "react-root",
+                "__NEXT_DATA__",
+                "window.__INITIAL_STATE__",
+                "window.__PRELOADED_STATE__",
+                "data-reactroot",
+                "ng-app",
+                "ng-controller",
+            ]
+            
+            html_lower = html.lower()
+            for indicator in js_indicators:
+                if indicator in html_lower:
+                    logger.debug(f"Detected JS indicator '{indicator}' in page for {store}")
+                    return True
+            
+            # Check if page has very little content (might be a shell)
+            if len(html.strip()) < 500:
+                logger.debug(f"Page has very little content ({len(html)} chars), likely JS-rendered")
+                return True
+            
+            # Check if page has script tags but no visible content structure
+            from selectolax.parser import HTMLParser
+            parser = HTMLParser(html)
+            scripts = parser.css("script")
+            body_text = parser.css("body")
+            
+            if len(scripts) > 5 and (not body_text or len(body_text[0].text(separator=" ").strip()) < 200):
+                logger.debug(f"Page has many scripts but little body content, likely JS-rendered")
+                return True
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error detecting JS-rendered page: {e}")
+            # If we can't determine, assume it might be JS-rendered and try headless
+            return True
+    
+    async def _try_headless_fallback(self, store: str, parser: BaseCategoryParser, category_url: str) -> List[DiscoveredProduct]:
+        """
+        Try to fetch products using headless browser as fallback.
+        
+        Args:
+            store: Store identifier
+            parser: Category parser instance
+            category_url: URL to scan
+            
+        Returns:
+            List of discovered products, or empty list if failed
+        """
+        try:
+            # Import here to avoid circular dependencies
+            from src.ingest.fetchers.headless import HeadlessBrowserFetcher
+            
+            # For category pages, we need to use a different approach
+            # Since HeadlessBrowserFetcher is designed for product pages, not category pages,
+            # we'll fetch the HTML with headless browser and then parse it
+            from playwright.async_api import async_playwright
+            
+            logger.info(f"Attempting headless browser fetch for {store} category page")
+            
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+            )
+            page = await context.new_page()
+            
+            try:
+                # Navigate to category page
+                await page.goto(category_url, wait_until="networkidle", timeout=30000)
+                
+                # Wait a bit for JS to render
+                await asyncio.sleep(2)
+                
+                # Get fully rendered HTML
+                html = await page.content()
+                
+                # Parse with the regular parser
+                products = parser.parse_category_page(html, category_url)
+                
+                logger.info(f"Headless fallback parsed {len(products)} products for {store}")
+                return products
+            finally:
+                await page.close()
+                await context.close()
+                await browser.close()
+                await playwright.stop()
+        except Exception as e:
+            logger.error(f"Headless fallback failed for {store}: {e}")
+            return []
 
 
 # Global scanner instance

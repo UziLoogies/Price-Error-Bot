@@ -8,7 +8,10 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.ai.llm_anomaly_reviewer import llm_anomaly_reviewer
+from src.config import settings
 from src.db.models import Product, PriceHistory, Rule as RuleModel
+from src.detect.anomaly_detector import anomaly_detector
 from src.detect.rules import Rule, RuleType
 from src.normalize.processor import NormalizedPrice
 
@@ -109,12 +112,56 @@ class DetectionEngine:
                         )
                         continue
 
-                # Combine confidence scores
+                # Hybrid approach: Fast statistical detection + ML + LLM review
                 confidence = normalized_price.confidence * 0.9  # Slight reduction
+                
+                # Run ML anomaly detection if enabled
+                ml_result = None
+                if settings.ai_anomaly_detection_enabled:
+                    try:
+                        ml_result = await anomaly_detector.detect(
+                            db=self.db,
+                            product_id=product.id,
+                            current_price=normalized_price.current_price,
+                            original_price=normalized_price.original_price,
+                        )
+                        
+                        # Boost confidence if ML agrees
+                        if ml_result.is_anomaly and ml_result.anomaly_score > 0.7:
+                            confidence = min(1.0, confidence + 0.1)
+                            reason += f" (ML score: {ml_result.anomaly_score:.2f})"
+                    except Exception as e:
+                        logger.warning(f"ML anomaly detection failed: {e}")
+                
+                # LLM review for high-confidence candidates
+                if settings.ai_llm_review_enabled and ml_result and ml_result.anomaly_score >= settings.ai_llm_review_threshold:
+                    try:
+                        llm_review = await self._review_with_llm(
+                            product=product,
+                            current_price=normalized_price.current_price,
+                            ml_result=ml_result,
+                        )
+                        
+                        # Adjust confidence based on LLM review
+                        if not llm_review.is_valid:
+                            # LLM says it's not a valid anomaly
+                            logger.info(
+                                f"LLM review rejected anomaly for {product.sku}: "
+                                f"{llm_review.explanation}"
+                            )
+                            continue  # Skip this detection
+                        
+                        confidence = max(0.0, min(1.0, confidence + llm_review.confidence_adjustment))
+                        if llm_review.explanation:
+                            reason += f" | LLM: {llm_review.explanation[:100]}"
+                    except Exception as e:
+                        logger.warning(f"LLM review failed: {e}")
+                        # Continue without LLM review if it fails
 
                 logger.info(
                     f"Price error detected for {product.sku}: {reason} "
-                    f"(Rule: {rule.name or rule.rule_type.value})"
+                    f"(Rule: {rule.name or rule.rule_type.value}, "
+                    f"confidence: {confidence:.2f})"
                 )
 
                 return DetectionResult(
@@ -197,3 +244,27 @@ class DetectionEngine:
                 product.baseline_price = baseline
                 await self.db.commit()
                 logger.info(f"Updated baseline price for product {product_id}: ${baseline:.2f}")
+    
+    async def _review_with_llm(
+        self,
+        product: Product,
+        current_price: Decimal,
+        ml_result,
+    ):
+        """
+        Review anomaly detection result with LLM.
+        
+        Args:
+            product: Product
+            current_price: Current price
+            ml_result: Anomaly detection result
+            
+        Returns:
+            LLMReview object
+        """
+        return await llm_anomaly_reviewer.review_anomaly(
+            product=product,
+            current_price=current_price,
+            ml_result=ml_result,
+            db=self.db,
+        )

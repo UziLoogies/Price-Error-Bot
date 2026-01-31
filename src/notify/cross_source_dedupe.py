@@ -8,7 +8,7 @@ and ensures only the best deal gets notified.
 import hashlib
 import logging
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 import redis.asyncio as redis
@@ -195,8 +195,12 @@ class CrossSourceDeduper:
             
             existing = await redis_client.get(key)
             if existing:
-                store, price_str = existing.split(":", 1)
-                return (store, Decimal(price_str))
+                try:
+                    store, price_str = existing.split(":", 1)
+                    return (store, Decimal(price_str))
+                except (ValueError, TypeError, InvalidOperation) as e:
+                    logger.debug(f"Malformed cache entry for key {key}: {existing} - {e}")
+                    # Ignore malformed entry and fall through to recompute best price
         except Exception as e:
             logger.error(f"Error getting best price: {e}")
         

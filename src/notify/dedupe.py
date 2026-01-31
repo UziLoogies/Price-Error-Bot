@@ -4,10 +4,16 @@ import hashlib
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Optional
 
 import redis.asyncio as redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.ai.product_matcher import product_matcher
 from src.config import settings
+from src.db.models import Product
+from src.db.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +75,8 @@ class DedupeManager:
         """
         Check if this alert is a duplicate.
 
+        Uses both exact matching (Redis) and semantic matching (embeddings).
+
         Args:
             store: Store name
             sku: Product SKU
@@ -77,11 +85,107 @@ class DedupeManager:
         Returns:
             True if duplicate, False otherwise
         """
+        # First check exact duplicate (fast)
         redis_client = await self._get_redis()
         dedupe_key = self._get_dedupe_key(store, sku, current_price)
-
+        
         exists = await redis_client.exists(dedupe_key)
-        return exists > 0
+        if exists > 0:
+            return True
+        
+        # Check semantic duplicate if enabled
+        if settings.ai_product_matching_enabled:
+            is_semantic_dup = await self.is_semantic_duplicate(store, sku, current_price)
+            if is_semantic_dup:
+                return True
+        
+        return False
+    
+    async def is_semantic_duplicate(
+        self,
+        store: str,
+        sku: str,
+        current_price: Decimal,
+        similarity_threshold: Optional[float] = None,
+    ) -> bool:
+        """
+        Check if this product is semantically similar to a recently alerted product.
+        
+        Uses embeddings to find similar products that were recently alerted.
+        
+        Args:
+            store: Store name
+            sku: Product SKU
+            current_price: Current price
+            similarity_threshold: Optional similarity threshold (defaults to settings.similarity_threshold)
+            
+        Returns:
+            True if semantically similar product was recently alerted, False otherwise
+        """
+        if not settings.ai_product_matching_enabled or not settings.vector_db_enabled:
+            return False
+        
+        similarity_threshold = similarity_threshold or settings.similarity_threshold
+        
+        try:
+            async with AsyncSessionLocal() as db:
+                # Get current product
+                query = select(Product).where(Product.store == store, Product.sku == sku)
+                result = await db.execute(query)
+                product = result.scalar_one_or_none()
+                
+                if not product:
+                    return False
+                
+                # Find similar products
+                similar_products = await product_matcher.find_similar_products(
+                    db=db,
+                    product=product,
+                    threshold=similarity_threshold,
+                    limit=10,
+                    exclude_same_store=False,  # Include same store for deduplication
+                )
+                
+                # Check if any similar product was recently alerted
+                redis_client = await self._get_redis()
+                
+                # Load full products to get baseline_price for each match
+                match_products = {}
+                for match in similar_products:
+                    match_query = select(Product).where(
+                        Product.id == match.product_id
+                    )
+                    match_result = await db.execute(match_query)
+                    match_product = match_result.scalar_one_or_none()
+                    if match_product:
+                        match_products[match.product_id] = match_product
+                
+                # Build all dedupe keys for batch check
+                dedupe_keys = []
+                for match in similar_products:
+                    if match.product_id in match_products:
+                        match_product = match_products[match.product_id]
+                        match_price = float(match_product.baseline_price) if match_product.baseline_price else current_price
+                        match_dedupe_key = self._get_dedupe_key(match.store, match.sku, match_price)
+                        dedupe_keys.append(match_dedupe_key)
+                
+                # Batch check all keys at once
+                if dedupe_keys:
+                    exists_results = await redis_client.mget(*dedupe_keys)
+                    for i, exists in enumerate(exists_results):
+                        if exists:
+                            match = similar_products[i]
+                            logger.debug(
+                                f"Semantic duplicate detected: {store}:{sku} matches "
+                                f"{match.store}:{match.sku} (similarity: {match.similarity_score:.3f})"
+                            )
+                            return True
+                
+                return False
+                
+        except Exception as e:
+            logger.warning(f"Semantic duplicate check failed: {e}")
+            return False  # Fail open - don't block alerts if semantic check fails
 
     async def mark_sent(
         self, store: str, sku: str, current_price: Decimal

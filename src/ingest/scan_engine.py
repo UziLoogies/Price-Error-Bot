@@ -666,6 +666,20 @@ class ScanEngine:
                 (error_lower.count("404") > 0 and "not found" in error_lower)
             )
         
+        def _is_blocked_error(error_message: str) -> bool:
+            """Check if error message indicates a blocked/403 error."""
+            if not error_message:
+                return False
+            error_lower = error_message.lower()
+            return (
+                "blocked" in error_lower or
+                "403" in error_lower or
+                "forbidden" in error_lower or
+                "captcha" in error_lower or
+                "bot challenge" in error_lower or
+                "/blocked" in error_lower
+            )
+        
         def _update_category_from_result(cat: StoreCategory, scan_result: ScanResult, scan_time: datetime):
             """Update category model from scan result."""
             cat.last_scanned = scan_time
@@ -675,6 +689,8 @@ class ScanEngine:
             if scan_result.error:
                 cat.last_error = scan_result.error
                 cat.last_error_at = scan_time
+                
+                # Auto-disable on 404 errors
                 if settings.category_disable_on_404 and _is_404_error(scan_result.error):
                     logger.warning(
                         "Auto-disabling category %s (%s) due to 404/410 error: %s",
@@ -683,6 +699,29 @@ class ScanEngine:
                         scan_result.error
                     )
                     cat.enabled = False
+                
+                # Auto-disable after N consecutive blocked occurrences
+                elif _is_blocked_error(scan_result.error):
+                    # Track consecutive blocked occurrences
+                    # Use a simple approach: check if last_error was also blocked
+                    consecutive_blocked = 1
+                    if cat.last_error and _is_blocked_error(cat.last_error):
+                        # Check if last error was recent (within 24 hours)
+                        if cat.last_error_at:
+                            hours_since_last = (scan_time - cat.last_error_at).total_seconds() / 3600
+                            if hours_since_last < 24:
+                                consecutive_blocked = 2  # At least 2 consecutive
+                    
+                    max_blocked = getattr(settings, 'category_max_consecutive_blocks', 3)
+                    if consecutive_blocked >= max_blocked:
+                        logger.warning(
+                            "Auto-disabling category %s (%s) after %d consecutive blocked occurrences: %s",
+                            cat.category_name,
+                            cat.store,
+                            consecutive_blocked,
+                            scan_result.error
+                        )
+                        cat.enabled = False
             else:
                 cat.last_error = None
                 cat.last_error_at = None

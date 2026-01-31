@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 import statistics
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,18 +112,14 @@ class BaselineAggregationJob:
         
         for product in products:
             try:
-                await self._update_baseline_cache(db, product)
+                result = await self._update_baseline_cache(db, product)
                 stats["processed"] += 1
                 
-                # Check if this was an update or create
-                existing = await db.execute(
-                    select(ProductBaselineCache)
-                    .where(ProductBaselineCache.product_id == product.id)
-                )
-                if existing.scalar_one_or_none():
-                    stats["updated"] += 1
-                else:
+                if result is True:
                     stats["created"] += 1
+                elif result is False:
+                    stats["updated"] += 1
+                # If result is None, it's a no-op, don't increment created/updated
                     
             except Exception as e:
                 logger.error(f"Error processing product {product.id}: {e}")
@@ -136,8 +132,17 @@ class BaselineAggregationJob:
         self,
         db: AsyncSession,
         product: Product,
-    ) -> None:
-        """Update or create baseline cache for a product."""
+    ) -> Optional[bool]:
+        """
+        Update or create baseline cache for a product.
+        
+        Args:
+            db: Database session
+            product: Product to update baseline cache for
+            
+        Returns:
+            True if a new ProductBaselineCache was created, False if an existing one was updated, None if no-op
+        """
         # Get price history
         now = datetime.utcnow()
         cutoff_7d = now - timedelta(days=7)
@@ -153,7 +158,8 @@ class BaselineAggregationJob:
         all_history = list(result.scalars().all())
         
         if not all_history:
-            return
+            # Return None since we didn't create or update anything (no-op)
+            return None
         
         # Calculate statistics
         all_prices = [float(h.price) for h in all_history if h.price > 0]
@@ -161,7 +167,8 @@ class BaselineAggregationJob:
         prices_30d = [float(h.price) for h in all_history if h.price > 0 and h.fetched_at >= cutoff_30d]
         
         if not all_prices:
-            return
+            # Return None since we didn't create or update anything (no-op)
+            return None
         
         avg_7d = Decimal(str(round(statistics.mean(prices_7d), 2))) if prices_7d else None
         avg_30d = Decimal(str(round(statistics.mean(prices_30d), 2))) if prices_30d else None
@@ -202,6 +209,7 @@ class BaselineAggregationJob:
             cache.last_calculated = now
             cache.last_price = all_history[0].price
             cache.last_price_at = all_history[0].fetched_at
+            return False  # Updated existing
         else:
             # Create new
             cache = ProductBaselineCache(
@@ -219,6 +227,7 @@ class BaselineAggregationJob:
                 last_price_at=all_history[0].fetched_at,
             )
             db.add(cache)
+            return True  # Created new
     
     async def _prune_old_history(self, db: AsyncSession) -> int:
         """Prune price history older than retention period."""

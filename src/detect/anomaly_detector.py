@@ -8,7 +8,6 @@ Implements multiple detection methods:
 """
 
 import logging
-import pickle
 import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -17,13 +16,19 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import numpy as np
+from sklearn.ensemble import IsolationForest
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.ai.anomaly_features import anomaly_feature_extractor
+from src.config import settings
 from src.db.models import Product, PriceHistory, ProductBaselineCache
 from src.detect.baseline import baseline_calculator, ProductBaseline, PriceStatistics
 from src.detect.comparative_pricing import comparative_pricing_engine
 from src.detect.msrp_service import msrp_service
+from src.utils.model_loader import load_model_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,9 @@ class AnomalyResult:
     iqr_outlier: bool = False
     isolation_score: Optional[float] = None
     rate_of_change: Optional[float] = None
+    gmm_score: Optional[float] = None
+    autoencoder_score: Optional[float] = None
+    ensemble_score: Optional[float] = None
     reasons: List[str] = field(default_factory=list)
     
     @property
@@ -90,25 +98,30 @@ class AnomalyDetector:
         self.model_path = model_path or Path("data/models/isolation_forest.pkl")
         
         self._isolation_model = None
+        self._gmm_model = None
+        self._autoencoder_model = None
+        self._scaler = StandardScaler()
         self._model_loaded = False
+        self._use_enhanced_ml = settings.ai_anomaly_detection_enabled
     
     def _load_model(self) -> bool:
-        """Load the Isolation Forest model if available."""
+        """
+        Load the Isolation Forest model if available.
+        
+        Uses shared utility function for consistent security validation
+        and error handling. Model files must be from trusted sources only.
+        """
         if self._model_loaded:
             return self._isolation_model is not None
         
         self._model_loaded = True
         
-        if self.model_path.exists():
-            try:
-                with open(self.model_path, "rb") as f:
-                    self._isolation_model = pickle.load(f)
-                logger.info(f"Loaded Isolation Forest model from {self.model_path}")
-                return True
-            except Exception as e:
-                logger.warning(f"Failed to load Isolation Forest model: {e}")
-        
-        return False
+        try:
+            self._isolation_model = load_model_with_fallback(self.model_path)
+            return True
+        except (FileNotFoundError, ValueError, RuntimeError) as e:
+            logger.warning(f"Failed to load Isolation Forest model: {e}")
+            return False
     
     async def detect(
         self,
@@ -181,6 +194,36 @@ class AnomalyDetector:
                 reasons.append(f"Isolation Forest score: {isolation_score:.3f}")
                 scores.append(isolation_score)
         
+        # Enhanced ML methods (if enabled)
+        gmm_score = None
+        autoencoder_score = None
+        if self._use_enhanced_ml:
+            # 3a. Gaussian Mixture Model Detection
+            gmm_result = await self._detect_with_gmm(
+                db,
+                product_id,
+                current_price,
+            )
+            if gmm_result:
+                gmm_score = gmm_result["score"]
+                if gmm_result["is_anomaly"]:
+                    detection_methods.append("gmm")
+                    reasons.append(f"GMM score: {gmm_score:.3f}")
+                    scores.append(gmm_score)
+            
+            # 3b. Autoencoder Detection
+            ae_result = await self._detect_with_autoencoder(
+                db,
+                product_id,
+                current_price,
+            )
+            if ae_result:
+                autoencoder_score = ae_result["score"]
+                if ae_result["is_anomaly"]:
+                    detection_methods.append("autoencoder")
+                    reasons.append(f"Autoencoder score: {autoencoder_score:.3f}")
+                    scores.append(autoencoder_score)
+        
         # 4. Rate of Change Detection
         if history and len(history) >= 2:
             recent_prices = [float(h.price) for h in history[:5] if h.price > 0]
@@ -214,10 +257,35 @@ class AnomalyDetector:
         else:
             anomaly_score = 0.0
         
+        # Ensemble voting (if multiple ML methods available)
+        ensemble_score = None
+        if self._use_enhanced_ml and (isolation_score is not None or gmm_score is not None or autoencoder_score is not None):
+            ml_scores = [s for s in [isolation_score, gmm_score, autoencoder_score] if s is not None]
+            if len(ml_scores) >= 2:
+                ensemble_score = np.mean(ml_scores)
+                # If ensemble agrees, boost confidence
+                if all(s > 0.5 for s in ml_scores):
+                    detection_methods.append("ensemble")
+                    reasons.append(f"Ensemble agreement (avg: {ensemble_score:.3f})")
+                    scores.append(ensemble_score)
+        
+        # Recalculate anomaly_score after ensemble additions
+        if scores:
+            anomaly_score = sum(scores) / len(scores)
+            # Boost score if multiple methods agree
+            if len(detection_methods) >= 2:
+                anomaly_score = min(1.0, anomaly_score * 1.2)
+            if len(detection_methods) >= 3:
+                anomaly_score = min(1.0, anomaly_score * 1.1)
+        else:
+            anomaly_score = 0.0
+        
+        # Update is_anomaly based on final score
+        is_anomaly = anomaly_score > 0.5 or len(detection_methods) > 0
+        
         # Confidence based on data quality and method agreement
         confidence = self._calculate_confidence(
             baseline,
-            stats,
             len(detection_methods),
             len(history) if history else 0,
         )
@@ -232,6 +300,9 @@ class AnomalyDetector:
             iqr_outlier=iqr_outlier,
             isolation_score=isolation_score,
             rate_of_change=rate_of_change,
+            gmm_score=gmm_score,
+            autoencoder_score=autoencoder_score,
+            ensemble_score=ensemble_score,
             reasons=reasons,
         )
     
@@ -349,7 +420,6 @@ class AnomalyDetector:
     def _calculate_confidence(
         self,
         baseline: Optional[ProductBaseline],
-        stats: Optional[PriceStatistics],
         methods_triggered: int,
         history_count: int,
     ) -> float:
@@ -554,6 +624,145 @@ class AnomalyDetector:
             confidence += 0.1
         
         return min(1.0, confidence)
+    
+    async def _detect_with_gmm(
+        self,
+        db: AsyncSession,
+        product_id: int,
+        current_price: Decimal,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect anomaly using Gaussian Mixture Model.
+        
+        Args:
+            db: Database session
+            product_id: Product ID
+            current_price: Current price
+            
+        Returns:
+            Dictionary with is_anomaly and score, or None if insufficient data
+        """
+        try:
+            # Get historical prices
+            history = await baseline_calculator.get_price_history(db, product_id, limit=50)
+            if len(history) < 10:
+                return None
+            
+            prices = np.array([[float(h.price)] for h in history])
+            
+            # Fit GMM
+            n_components = min(3, len(prices) // 5)  # Adaptive component count
+            if n_components < 1:
+                return None
+            
+            gmm = GaussianMixture(n_components=n_components, random_state=42)
+            gmm.fit(prices)
+            
+            # Get log probability for current price
+            current_price_array = np.array([[float(current_price)]])
+            log_prob = gmm.score_samples(current_price_array)[0]
+            
+            # Calculate threshold (use percentile of historical log probs)
+            hist_log_probs = gmm.score_samples(prices)
+            threshold = np.percentile(hist_log_probs, 10)  # Bottom 10% is anomalous
+            
+            is_anomaly = log_prob < threshold
+            
+            # Normalize score (lower log prob = higher anomaly score)
+            score = max(0.0, min(1.0, 1.0 - (log_prob - threshold) / abs(threshold) if threshold < 0 else 0.5))
+            
+            return {
+                "is_anomaly": is_anomaly,
+                "score": float(score),
+                "log_prob": float(log_prob),
+            }
+        except Exception as e:
+            logger.warning(f"GMM detection failed: {e}")
+            return None
+    
+    async def _detect_with_autoencoder(
+        self,
+        db: AsyncSession,
+        product_id: int,
+        current_price: Decimal,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect anomaly using Autoencoder (reconstruction error).
+        
+        Note: Full autoencoder implementation would require training a neural network.
+        This is a simplified version using feature-based reconstruction error.
+        
+        Args:
+            db: Database session
+            product_id: Product ID
+            current_price: Current price
+            
+        Returns:
+            Dictionary with is_anomaly and score, or None if insufficient data
+        """
+        try:
+            # Extract features for current price
+            features = await anomaly_feature_extractor.extract_features(
+                product_id,
+                current_price,
+                db,
+            )
+            
+            if not features or len(features) < 5:
+                return None
+            
+            # Get historical features (simplified - use price history)
+            history = await baseline_calculator.get_price_history(db, product_id, limit=30)
+            if len(history) < 10:
+                return None
+            
+            # Build feature matrix from historical prices
+            hist_features = []
+            for h in history:
+                hist_feat = await anomaly_feature_extractor.extract_features(
+                    product_id,
+                    h.price,
+                    db,
+                )
+                if hist_feat:
+                    hist_features.append(list(hist_feat.values()))
+            
+            if len(hist_features) < 10:
+                return None
+            
+            hist_features_array = np.array(hist_features)
+            current_features_array = np.array([list(features.values())])
+            
+            # Simple reconstruction: use mean of historical features as "reconstruction"
+            mean_features = np.mean(hist_features_array, axis=0)
+            
+            # Calculate reconstruction error (MSE)
+            reconstruction_error = np.mean((current_features_array - mean_features) ** 2)
+            
+            # Calculate threshold (percentile of historical errors)
+            hist_errors = []
+            for hist_feat in hist_features:
+                error = np.mean((hist_feat - mean_features) ** 2)
+                hist_errors.append(error)
+            
+            threshold = np.percentile(hist_errors, 90)  # Top 10% error is anomalous
+            
+            is_anomaly = reconstruction_error > threshold
+            
+            # Normalize score
+            if threshold > 0:
+                score = min(1.0, reconstruction_error / threshold)
+            else:
+                score = 0.5
+            
+            return {
+                "is_anomaly": is_anomaly,
+                "score": float(score),
+                "reconstruction_error": float(reconstruction_error),
+            }
+        except Exception as e:
+            logger.warning(f"Autoencoder detection failed: {e}")
+            return None
 
 
 # Global anomaly detector instance

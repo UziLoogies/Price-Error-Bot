@@ -232,8 +232,6 @@ class StoreHealthTracker:
                 "no_data": True,
             }
         
-        now = datetime.utcnow()
-        
         # Determine health status
         if store_metrics.error_rate > 0.5:
             status = "critical"
