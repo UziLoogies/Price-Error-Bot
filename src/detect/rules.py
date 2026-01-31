@@ -13,6 +13,11 @@ class RuleType(str, Enum):
     ABSOLUTE_THRESHOLD = "absolute"  # current <= threshold
     MSRP_RATIO = "msrp_ratio"  # current <= msrp * threshold
     VELOCITY_CHECK = "velocity"  # price changed N times in M minutes
+    PENNY_PRICING = "penny_pricing"  # Price $0.01-$1.00 for high-value products
+    CURRENCY_ERROR = "currency_error"  # Currency conversion errors
+    VARIANT_DISCREPANCY = "variant_discrepancy"  # Price mismatch across variants
+    CATEGORY_OUTLIER = "category_outlier"  # Price >3σ below category average
+    MSRP_DEVIATION = "msrp_deviation"  # >90% off MSRP (unless clearance)
 
 
 @dataclass
@@ -70,6 +75,30 @@ class Rule:
             # This rule would need price history context
             # For now, we'll implement it in the engine
             return False, "Velocity check requires history context"
+        
+        elif self.rule_type == RuleType.PENNY_PRICING:
+            # Flag items priced $0.01-$1.00 for high-value products
+            # Threshold represents minimum expected price for high-value items
+            if current_price <= Decimal("1.00") and (msrp or baseline_price):
+                expected_price = msrp if msrp else baseline_price
+                if expected_price and expected_price >= self.threshold:
+                    return True, f"Penny pricing detected: ${current_price:.2f} for item expected ${expected_price:.2f}"
+        
+        elif self.rule_type == RuleType.CURRENCY_ERROR:
+            # Detect currency mismatches (would need currency context)
+            # For now, flag suspiciously low prices that might be currency errors
+            if msrp and current_price > 0:
+                # If price is exactly 1/100th of MSRP, might be currency error
+                if abs(current_price - (msrp / 100)) < Decimal("0.01"):
+                    return True, f"Possible currency error: ${current_price:.2f} vs MSRP ${msrp:.2f}"
+        
+        elif self.rule_type == RuleType.MSRP_DEVIATION:
+            # Flag >90% off MSRP (unless marked clearance)
+            if msrp and msrp > 0:
+                discount_ratio = current_price / msrp
+                if discount_ratio <= self.threshold:  # threshold = 0.1 (90% off)
+                    percent_off = (1 - discount_ratio) * 100
+                    return True, f"{percent_off:.1f}% off MSRP (${msrp:.2f}) - potential error"
 
         return False, "Rule not triggered"
 

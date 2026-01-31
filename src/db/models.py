@@ -35,12 +35,19 @@ class Product(Base):
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Product image URL
     msrp: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    msrp_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # keepa, manual, etc.
+    msrp_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     baseline_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(10, 2), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+    first_seen_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )  # When we first discovered this product
+    price_change_count_24h: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_price_change_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     price_history: Mapped[list["PriceHistory"]] = relationship(
@@ -117,6 +124,7 @@ class Alert(Base):
     sent_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+    false_positive_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Relationships
     product: Mapped["Product"] = relationship("Product", back_populates="alerts")
@@ -124,7 +132,7 @@ class Alert(Base):
 
 
 class Webhook(Base):
-    """Discord webhook configuration."""
+    """Webhook configuration for multi-platform notifications."""
 
     __tablename__ = "webhooks"
 
@@ -132,10 +140,36 @@ class Webhook(Base):
     name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    
+    # Webhook type: discord, telegram, slack, generic
+    webhook_type: Mapped[str] = mapped_column(String(32), default="discord", nullable=False)
+    
+    # Custom message template (Jinja2 format)
+    template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Custom headers for generic webhooks (JSON string)
+    headers: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Filters for which alerts to send (JSON string)
+    # Format: {"min_discount": 50, "stores": ["amazon_us"], "categories": ["electronics"]}
+    filters: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Telegram-specific fields
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    telegram_bot_token: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    
+    # Statistics
+    last_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    send_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
 
 
 class ProxyConfig(Base):
-    """Proxy configuration for rotating datacenter proxies."""
+    """Proxy configuration for rotating proxies (datacenter, residential, ISP)."""
 
     __tablename__ = "proxy_configs"
 
@@ -146,6 +180,18 @@ class ProxyConfig(Base):
     username: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     password: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    
+    # Proxy type classification
+    proxy_type: Mapped[str] = mapped_column(
+        String(32), default="datacenter", nullable=False
+    )  # 'datacenter', 'residential', 'isp'
+    provider: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    region: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # US, EU, etc.
+    cost_per_gb: Mapped[Optional[float]] = mapped_column(nullable=True)  # For residential proxies
+    
+    # Health tracking
+    success_rate: Mapped[float] = mapped_column(default=1.0, nullable=False)
+    avg_latency_ms: Mapped[float] = mapped_column(default=0.0, nullable=False)
     last_used: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_success: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -248,3 +294,73 @@ class ProductExclusion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+
+
+class ProductBaselineCache(Base):
+    """Cached price baseline calculations for products.
+    
+    Stores pre-computed baseline statistics to avoid recalculating
+    on every price check. Updated periodically by baseline job.
+    """
+
+    __tablename__ = "product_baseline_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id"), nullable=False, unique=True
+    )
+    
+    # Rolling averages
+    avg_price_7d: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    avg_price_30d: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    
+    # Price range
+    min_price_seen: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    max_price_seen: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    
+    # Current baseline (best estimate of "normal" price)
+    current_baseline: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    
+    # Statistics
+    price_stability: Mapped[float] = mapped_column(default=0.5, nullable=False)  # 0.0-1.0
+    std_deviation: Mapped[Optional[float]] = mapped_column(nullable=True)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    # Timestamps
+    last_calculated: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    last_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    last_price_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Relationship
+    product: Mapped["Product"] = relationship("Product")
+
+
+class NotificationHistory(Base):
+    """History of notifications sent for tracking and debugging."""
+
+    __tablename__ = "notification_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    webhook_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("webhooks.id"), nullable=False
+    )
+    product_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("products.id"), nullable=True
+    )
+    
+    # Notification details
+    notification_type: Mapped[str] = mapped_column(String(32), nullable=False)  # alert, test, etc.
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # sent, failed, pending
+    
+    # Content
+    payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON payload sent
+    response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Response from webhook
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Timing
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    response_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

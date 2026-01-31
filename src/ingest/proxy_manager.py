@@ -5,7 +5,7 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 import httpx
 
@@ -47,7 +47,6 @@ class ProxyRotator:
         self._proxies: list[ProxyInfo] = []
         self._current_index: int = 0
         self._lock = asyncio.Lock()
-        self._failure_threshold = 5  # Disable proxy after this many failures
         self._db_session_factory = None
     
     def set_session_factory(self, factory):
@@ -65,8 +64,7 @@ class ProxyRotator:
         
         async with self._db_session_factory() as db:
             query = select(ProxyConfig).where(
-                ProxyConfig.enabled == True,
-                ProxyConfig.failure_count < self._failure_threshold
+                ProxyConfig.enabled == True
             )
             result = await db.execute(query)
             proxy_models = result.scalars().all()
@@ -84,8 +82,16 @@ class ProxyRotator:
             
             logger.info(f"Loaded {len(self._proxies)} proxies")
     
-    async def get_next_proxy(self) -> Optional[ProxyInfo]:
-        """Get next proxy in rotation (round-robin)."""
+    async def get_next_proxy(self, exclude_ids: Optional[set[int]] = None) -> Optional[ProxyInfo]:
+        """
+        Get next proxy in rotation (round-robin), excluding specified proxy IDs.
+        
+        Args:
+            exclude_ids: Set of proxy IDs to exclude from selection
+            
+        Returns:
+            ProxyInfo if available, None otherwise
+        """
         async with self._lock:
             if not self._proxies:
                 await self.load_proxies()
@@ -94,13 +100,35 @@ class ProxyRotator:
                 logger.warning("No proxies available")
                 return None
             
-            proxy = self._proxies[self._current_index]
-            self._current_index = (self._current_index + 1) % len(self._proxies)
+            # Filter out excluded proxies
+            available_proxies = self._proxies
+            if exclude_ids:
+                available_proxies = [p for p in self._proxies if p.id not in exclude_ids]
+                if not available_proxies:
+                    logger.warning(f"No proxies available after excluding {len(exclude_ids)} proxies")
+                    return None
             
-            # Update last_used in database
-            await self._update_last_used(proxy.id)
+            # Find next proxy starting from current index
+            start_index = self._current_index
+            attempts = 0
+            while attempts < len(available_proxies):
+                proxy = available_proxies[(start_index + attempts) % len(available_proxies)]
+                if not exclude_ids or proxy.id not in exclude_ids:
+                    # Update current index to point after this proxy
+                    self._current_index = (self._proxies.index(proxy) + 1) % len(self._proxies)
+                    # Update last_used in database
+                    await self._update_last_used(proxy.id)
+                    return proxy
+                attempts += 1
             
-            return proxy
+            # Fallback: return first available proxy
+            if available_proxies:
+                proxy = available_proxies[0]
+                self._current_index = (self._proxies.index(proxy) + 1) % len(self._proxies)
+                await self._update_last_used(proxy.id)
+                return proxy
+            
+            return None
     
     async def get_random_proxy(self) -> Optional[ProxyInfo]:
         """Get a random proxy from the pool."""
@@ -152,20 +180,12 @@ class ProxyRotator:
                 
                 if proxy:
                     proxy.failure_count += 1
-                    
-                    # Auto-disable if too many failures
-                    if proxy.failure_count >= self._failure_threshold:
-                        proxy.enabled = False
-                        logger.warning(
-                            f"Proxy {proxy.host}:{proxy.port} disabled after "
-                            f"{proxy.failure_count} failures"
-                        )
-                        # Remove from memory pool
-                        async with self._lock:
-                            self._proxies = [
-                                p for p in self._proxies if p.id != proxy_id
-                            ]
-                    
+                    # Note: Proxies remain enabled regardless of failure count
+                    # to ensure 24/7 operation. Users can manually disable via UI.
+                    logger.debug(
+                        f"Proxy {proxy.host}:{proxy.port} failure count: "
+                        f"{proxy.failure_count} (still enabled)"
+                    )
                     await db.commit()
         except Exception as e:
             logger.error(f"Failed to update proxy failure: {e}")

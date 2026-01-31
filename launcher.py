@@ -588,15 +588,23 @@ def start_server():
             asyncio.run(server.serve())
             
         except ImportError as e:
+            error_msg = f"Failed to import server dependencies: {e}"
             if logger is not None:
-                logger.error(f"Failed to import server dependencies: {e}", exc_info=True)
+                logger.error(error_msg, exc_info=True)
+            else:
+                print(f"ERROR: {error_msg}", file=sys.stderr, flush=True)
+                traceback.print_exc()
             server_started.set()  # Unblock main thread
             raise  # Re-raise to be caught by main()
         except Exception as e:
+            error_msg = f"Server startup failed: {e}"
             if logger is not None:
-                logger.error(f"Server error: {e}", exc_info=True)
+                logger.critical("Server thread exception details: " + error_msg, exc_info=True)
+            else:
+                print(f"ERROR: {error_msg}", file=sys.stderr, flush=True)
+                traceback.print_exc()
             server_started.set()  # Unblock main thread even on error
-            # Don't re-raise - let main() handle the server startup failure
+            # Don't re-raise - let main() handle the server startup failure via check_server_ready()
     
     # Kill any existing server on the port
     kill_existing_server()
@@ -780,9 +788,17 @@ def main():
                 resizable=True,
                 text_select=True,
             )
+            # Trigger shutdown only when the window is actually closed
+            try:
+                window.events.closed += on_closed
+            except Exception:
+                # Log the hookup failure but don't call on_closed() as it would
+                # prematurely set shutdown_requested before webview.start() runs
+                if logger is not None:
+                    logger.exception("Failed to hook on_closed to window.events.closed")
             # Wrap webview.start() with error isolation
             try:
-                webview.start(func=on_closed, debug=False)
+                webview.start(debug=False)
             except Exception as e:
                 if logger is not None:
                     logger.error("Webview runtime error: %s", e, exc_info=True)

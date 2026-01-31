@@ -14,8 +14,8 @@ class RawPriceData:
     sku: str
     url: str
     store: str
-    current_price: Optional[Decimal]
-    msrp: Optional[Decimal]
+    current_price: Optional[Decimal] = None
+    msrp: Optional[Decimal] = None
     shipping: Decimal = Decimal("0.00")
     availability: str = "unknown"
     currency: str = "USD"

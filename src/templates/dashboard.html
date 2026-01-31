@@ -1257,11 +1257,7 @@
                 },
                 
                 get filteredDeals() {
-                    // Filter scans to only show successful ones with price changes (deals)
-                    let deals = this.scans.filter(s => 
-                        s.status === 'success' && 
-                        (s.price || s.previous_price)
-                    );
+                    let deals = this.deals.slice();
                     
                     // Apply store filter
                     if (this.dealStoreFilter) {
@@ -1280,8 +1276,8 @@
                     // Calculate discount percentage for each deal
                     deals = deals.map(d => ({
                         ...d,
-                        discount_percent: d.previous_price && d.price ? 
-                            ((d.previous_price - d.price) / d.previous_price * 100) : null
+                        discount_percent: d.discount_percent != null ? d.discount_percent :
+                            (d.original_price && d.price ? ((d.original_price - d.price) / d.original_price * 100) : null)
                     }));
                     
                     // Sort by discount percentage (highest first)
@@ -1316,6 +1312,7 @@
                     this.loadRules();
                     this.loadProxies();
                     this.loadScans();
+                    this.loadDeals();
                     this.loadCategories();
                     this.loadScanStats();
                     this.startPolling();
@@ -1395,6 +1392,17 @@
                         console.error('Failed to load scans:', e);
                     }
                 },
+
+                async loadDeals() {
+                    try {
+                        const res = await fetch('/api/dashboard/deals?limit=50');
+                        const data = await res.json();
+                        // Handle paginated response format
+                        this.deals = data.deals || data;
+                    } catch (e) {
+                        console.error('Failed to load deals:', e);
+                    }
+                },
                 
                 startPolling() {
                     // Poll for scan updates every 3 seconds
@@ -1402,6 +1410,7 @@
                         if (this.isScanning) {
                             this.loadScans();
                             this.loadStats();
+                            this.loadDeals();
                         }
                     }, 3000);
                 },

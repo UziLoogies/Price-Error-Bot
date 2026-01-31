@@ -16,6 +16,9 @@ from src.ingest.base import BaseFetcher, RawPriceData
 from src.ingest.rate_limiter import rate_limiter
 from src.ingest.session_manager import session_manager
 from src.ingest.proxy_manager import proxy_rotator, ProxyInfo
+from src.ingest.stealth_browser import stealth_browser
+from src.ingest.user_agent_pool import user_agent_pool
+from src.ingest.fingerprint_randomizer import fingerprint_randomizer
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +186,11 @@ class HeadlessBrowserFetcher(BaseFetcher):
                 "--disable-extensions",
             ]
 
-            # Random user agent for each session
-            user_agent = random.choice(USER_AGENTS)
+            # Get user agent from pool
+            user_agent = user_agent_pool.get_random()
+            
+            # Get fingerprint for context
+            fingerprint = fingerprint_randomizer.get_random_fingerprint()
 
             # If using proxy, create/reuse context with proxy
             if proxy:
@@ -197,13 +203,12 @@ class HeadlessBrowserFetcher(BaseFetcher):
                             args=stealth_args,
                         )
                     
-                    self._contexts[proxy.id] = await self._browser.new_context(
-                        user_agent=user_agent,
-                        viewport={"width": 1920, "height": 1080},
-                        locale="en-US",
-                        timezone_id="America/Chicago",
-                        proxy=proxy.playwright_config,
-                    )
+                    # Use stealth context options
+                    context_options = stealth_browser.get_stealth_context_options("chromium")
+                    context_options["proxy"] = proxy.playwright_config
+                    context_options["user_agent"] = user_agent
+                    
+                    self._contexts[proxy.id] = await self._browser.new_context(**context_options)
                 
                 return self._contexts[proxy.id]
             
@@ -222,22 +227,20 @@ class HeadlessBrowserFetcher(BaseFetcher):
 
                 # Use persistent context if available
                 if profile_path and profile_path.exists():
+                    context_options = stealth_browser.get_stealth_context_options("chromium")
+                    context_options["user_agent"] = user_agent
+                    
                     self._default_context = await self._playwright.chromium.launch_persistent_context(
                         str(profile_path),
                         headless=True,
-                        user_agent=user_agent,
-                        viewport={"width": 1920, "height": 1080},
-                        locale="en-US",
-                        timezone_id="America/Chicago",
                         args=stealth_args,
+                        **context_options,
                     )
                 else:
-                    self._default_context = await self._browser.new_context(
-                        user_agent=user_agent,
-                        viewport={"width": 1920, "height": 1080},
-                        locale="en-US",
-                        timezone_id="America/Chicago",
-                    )
+                    context_options = stealth_browser.get_stealth_context_options("chromium")
+                    context_options["user_agent"] = user_agent
+                    
+                    self._default_context = await self._browser.new_context(**context_options)
 
             return self._default_context
 
@@ -483,6 +486,9 @@ class HeadlessBrowserFetcher(BaseFetcher):
         page: Optional[Page] = None
         try:
             page = await context.new_page()
+            
+            # Apply stealth enhancements to page
+            await stealth_browser.setup_stealth_page(page)
 
             # Navigate to page
             logger.debug(f"Navigating to {url}")

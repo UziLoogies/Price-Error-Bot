@@ -481,11 +481,8 @@ async def extract_category_from_product(product_url: str) -> Optional[CategoryIn
     Returns:
         CategoryInfo with category URL, name, store, and confidence, or None if extraction fails
     """
-    # Detect store from URL
+    # Detect store from URL (may be a short link)
     store = detect_store_from_url(product_url)
-    if not store:
-        logger.warning(f"Unsupported store for URL: {product_url}")
-        return None
     
     # Fetch product page HTML
     try:
@@ -507,6 +504,11 @@ async def extract_category_from_product(product_url: str) -> Optional[CategoryIn
             response = await client.get(product_url)
             response.raise_for_status()
             html = response.text
+            final_url = str(response.url)
+            if not store:
+                store = detect_store_from_url(final_url)
+                if store:
+                    logger.info(f"Resolved short link to {final_url} (store={store})")
         
         # Report proxy success
         if proxy:
@@ -524,6 +526,9 @@ async def extract_category_from_product(product_url: str) -> Optional[CategoryIn
         return None
     
     # Store-specific extraction
+    if not store:
+        logger.warning(f"Could not determine store for URL: {product_url}")
+        return None
     if store == "bestbuy":
         return await extract_bestbuy_category(product_url, html)
     elif store == "amazon_us":

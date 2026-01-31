@@ -139,6 +139,32 @@ CATEGORY_THRESHOLDS: Dict[str, Dict[str, float]] = {
         "min_price": 10.0,
         "max_price": 500.0,
     },
+    # Deal aggregators - already curated, focus on exceptional deals
+    # These sites pre-filter deals, so we use stricter thresholds
+    "aggregator": {
+        "min_discount_percent": 50.0,  # Only 50%+ off deals
+        "msrp_threshold": 0.50,
+        "min_price": 1.0,  # Allow penny deals
+        "max_price": 10000.0,
+    },
+    "saveyourdeals": {
+        "min_discount_percent": 50.0,
+        "msrp_threshold": 0.50,
+        "min_price": 1.0,
+        "max_price": 10000.0,
+    },
+    "slickdeals": {
+        "min_discount_percent": 50.0,
+        "msrp_threshold": 0.50,
+        "min_price": 1.0,
+        "max_price": 10000.0,
+    },
+    "woot": {
+        "min_discount_percent": 50.0,
+        "msrp_threshold": 0.50,
+        "min_price": 1.0,
+        "max_price": 10000.0,
+    },
     # Default fallback
     "default": {
         "min_discount_percent": 40.0,
@@ -197,7 +223,7 @@ class DetectionConfig:
     msrp_threshold: float = 0.6
     strikethrough_threshold: float = 0.6
     min_discount_percent: float = 40.0
-    min_price: Decimal = Decimal("1.00")
+    min_price: Decimal = Decimal("0.01")
     max_price: Decimal = Decimal("10000.00")
     category: Optional[str] = None
     store: Optional[str] = None
@@ -207,12 +233,19 @@ class DetectionConfig:
         """Get detection config for a specific category and store."""
         # Normalize category name
         category_lower = category.lower() if category else "default"
+        store_lower = store.lower() if store else None
         
-        # Find matching threshold
-        thresholds = CATEGORY_THRESHOLDS.get(category_lower)
+        # First, check if we have store-specific thresholds (for deal aggregators)
+        thresholds = None
+        if store_lower and store_lower in CATEGORY_THRESHOLDS:
+            thresholds = CATEGORY_THRESHOLDS[store_lower]
+        
+        # If no store-specific thresholds, try category
+        if not thresholds:
+            thresholds = CATEGORY_THRESHOLDS.get(category_lower)
         
         if not thresholds:
-            # Try partial match
+            # Try partial match on category
             for key, values in CATEGORY_THRESHOLDS.items():
                 if key in category_lower or category_lower in key:
                     thresholds = values
@@ -247,16 +280,26 @@ class DetectedDeal:
     
     product: DiscoveredProduct
     discount_percent: float
-    detection_method: str  # 'msrp', 'strikethrough', 'threshold', 'combined'
+    detection_method: str  # 'msrp', 'strikethrough', 'threshold', 'combined', 'anomaly'
     confidence: float
     reason: str
     category: Optional[str] = None
     detection_signals: List[str] = field(default_factory=list)
     
+    # Anomaly detection fields
+    anomaly_score: Optional[float] = None  # 0.0-1.0 from ML detection
+    anomaly_methods: Optional[List[str]] = None  # Methods that flagged anomaly
+    z_score: Optional[float] = None  # Z-score if calculated
+    percentile: Optional[float] = None  # Price percentile in distribution
+    
     @property
     def is_significant(self) -> bool:
         """Check if this is a significant deal (worth alerting)."""
-        return self.discount_percent >= 40 and self.confidence >= 0.6
+        base_significant = self.discount_percent >= 40 and self.confidence >= 0.6
+        # Also significant if anomaly detection flagged it
+        if self.anomaly_score and self.anomaly_score >= 0.7:
+            return True
+        return base_significant
     
     @property
     def is_price_error(self) -> bool:
@@ -267,7 +310,22 @@ class DetectedDeal:
         # Multiple detection signals suggest error
         if len(self.detection_signals) >= 2 and self.discount_percent >= 60:
             return True
+        # Anomaly detection with high score
+        if self.anomaly_score and self.anomaly_score >= 0.8:
+            return True
+        # Multiple anomaly methods agree
+        if self.anomaly_methods and len(self.anomaly_methods) >= 2:
+            return True
         return False
+    
+    @property
+    def combined_score(self) -> float:
+        """Get combined confidence/anomaly score."""
+        base_score = self.confidence
+        if self.anomaly_score:
+            # Average of confidence and anomaly score, weighted by anomaly
+            return (base_score + self.anomaly_score * 1.5) / 2.5
+        return base_score
 
 
 class DealDetector:
@@ -286,7 +344,7 @@ class DealDetector:
         msrp_threshold: float = 0.5,  # Trigger if price <= 50% of MSRP
         strikethrough_threshold: float = 0.5,  # Trigger if 50%+ off strikethrough
         min_discount_percent: float = 50.0,  # Minimum discount to flag
-        min_price: Decimal = Decimal("1.00"),  # Ignore items under $1
+        min_price: Decimal = Decimal("0.01"),  # Allow penny/free deals
         max_price: Decimal = Decimal("10000.00"),  # Ignore items over $10k
         config: Optional[DetectionConfig] = None,
     ):
@@ -592,6 +650,97 @@ def get_detector_for_category(category_name: str) -> DealDetector:
     """Get a DealDetector configured for a specific category."""
     config = DetectionConfig.for_category(category_name)
     return DealDetector(config=config)
+
+
+async def enhance_deal_with_anomaly(
+    deal: DetectedDeal,
+    db,  # AsyncSession
+) -> DetectedDeal:
+    """
+    Enhance a detected deal with anomaly detection results.
+    
+    Args:
+        deal: Detected deal to enhance
+        db: Database session
+        
+    Returns:
+        Enhanced DetectedDeal with anomaly scores
+    """
+    from src.detect.anomaly_detector import anomaly_detector
+    
+    try:
+        anomaly_result = await anomaly_detector.detect_for_sku(
+            db,
+            deal.product.store,
+            deal.product.sku,
+            deal.product.current_price,
+            deal.product.original_price,
+        )
+        
+        # Update deal with anomaly data
+        deal.anomaly_score = anomaly_result.anomaly_score
+        deal.anomaly_methods = anomaly_result.detection_methods
+        deal.z_score = anomaly_result.z_score
+        deal.percentile = anomaly_result.percentile
+        
+        # Add anomaly signals to detection signals
+        if anomaly_result.is_anomaly:
+            deal.detection_signals.extend(anomaly_result.detection_methods)
+            deal.detection_signals = list(set(deal.detection_signals))
+        
+        # Boost confidence if anomaly detection agrees
+        if anomaly_result.is_anomaly and anomaly_result.confidence > 0.6:
+            deal.confidence = min(1.0, deal.confidence * 1.1)
+        
+        logger.debug(
+            f"Enhanced deal {deal.product.sku} with anomaly score: "
+            f"{anomaly_result.anomaly_score:.2f}"
+        )
+        
+    except Exception as e:
+        logger.warning(f"Failed to enhance deal with anomaly detection: {e}")
+    
+    return deal
+
+
+async def detect_deals_with_anomaly(
+    products: List[DiscoveredProduct],
+    category_name: str,
+    db,  # AsyncSession
+    min_confidence: float = 0.5,
+) -> List[DetectedDeal]:
+    """
+    Detect deals and enhance with anomaly detection.
+    
+    Args:
+        products: List of products to check
+        category_name: Category name for threshold lookup
+        db: Database session
+        min_confidence: Minimum confidence threshold
+        
+    Returns:
+        List of detected deals with anomaly scores
+    """
+    config = DetectionConfig.for_category(category_name)
+    detector = DealDetector(config=config)
+    
+    deals = []
+    for product in products:
+        deal = detector.detect_deal(product)
+        if deal and deal.confidence >= min_confidence:
+            # Enhance with anomaly detection
+            deal = await enhance_deal_with_anomaly(deal, db)
+            deals.append(deal)
+    
+    # Sort by combined score (considers both confidence and anomaly)
+    deals.sort(key=lambda d: d.combined_score, reverse=True)
+    
+    logger.info(
+        f"Detected {len(deals)} deals with anomaly enhancement from "
+        f"{len(products)} products in category '{category_name}'"
+    )
+    
+    return deals
 
 
 # Global deal detector instance with default settings

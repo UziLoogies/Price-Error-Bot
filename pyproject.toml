@@ -27,6 +27,9 @@ dependencies = [
     "python-json-logger>=2.0.7",
     "pywebview>=4.4.1",
     "psutil>=5.9.0",
+    "scikit-learn>=1.4.0",
+    "numpy>=1.26.0",
+    "lxml>=5.0.0",
 ]
 
 [project.optional-dependencies]

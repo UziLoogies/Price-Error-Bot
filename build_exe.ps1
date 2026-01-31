@@ -42,6 +42,11 @@ function Write-Error {
     Write-Host "[X] $Text" -ForegroundColor Red
 }
 
+function Write-Info {
+    param([string]$Text)
+    Write-Host "    $Text" -ForegroundColor Gray
+}
+
 # ============================================================================
 # MAIN BUILD PROCESS
 # ============================================================================
@@ -111,7 +116,9 @@ if (-not $SkipDeps) {
     
     if (-not $pyinstallerInstalled) {
         Write-Step "Installing PyInstaller..."
-        pip install pyinstaller --quiet 2>$null
+        $ErrorActionPreference = "SilentlyContinue"
+        pip install pyinstaller --quiet 2>&1 | Out-Null
+        $ErrorActionPreference = "Stop"
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Failed to install PyInstaller"
             exit 1
@@ -121,9 +128,44 @@ if (-not $SkipDeps) {
     Write-Success "Build dependencies ready"
 }
 
+# Function to stop running PriceErrorBot.exe
+function Stop-ExistingExe {
+    $exePath = "dist\PriceErrorBot.exe"
+    if (Test-Path $exePath) {
+        $processes = Get-Process -Name "PriceErrorBot" -ErrorAction SilentlyContinue
+        if ($processes) {
+            Write-Step "Stopping running PriceErrorBot.exe..."
+            foreach ($proc in $processes) {
+                try {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                    Write-Host "    Stopped process $($proc.Id)" -ForegroundColor Gray
+                } catch {
+                    Write-Warning "Could not stop process $($proc.Id): $_"
+                }
+            }
+            # Wait a moment for file handles to release
+            Start-Sleep -Seconds 2
+        }
+        
+        # Try to remove the file if it exists
+        try {
+            if (Test-Path $exePath) {
+                Remove-Item -Path $exePath -Force -ErrorAction Stop
+                Write-Success "Removed existing executable"
+            }
+        } catch {
+            Write-Warning "Could not remove existing executable (may be locked): $_"
+            Write-Info "You may need to close the application manually and try again"
+        }
+    }
+}
+
 # Clean previous builds
 if ($Clean) {
     Write-Step "Cleaning previous builds..."
+    
+    # Stop running exe first
+    Stop-ExistingExe
     
     if (Test-Path "build") {
         Remove-Item -Recurse -Force "build"
@@ -133,6 +175,9 @@ if ($Clean) {
     }
     
     Write-Success "Previous builds cleaned"
+} else {
+    # Even without --Clean, stop existing exe to avoid permission errors
+    Stop-ExistingExe
 }
 
 # Build the executable

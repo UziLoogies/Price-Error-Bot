@@ -6,6 +6,184 @@ from prometheus_client import Counter, Gauge, Histogram, Info
 app_info = Info("price_error_bot", "Price Error Bot application info")
 app_info.info({"version": "0.1.0", "name": "price-error-bot"})
 
+# =============================================================================
+# Category Scan Metrics
+# =============================================================================
+
+category_scan_duration = Histogram(
+    "category_scan_duration_seconds",
+    "Time to scan a category",
+    ["store", "category"],
+    buckets=[1, 5, 10, 30, 60, 120, 300],
+)
+
+products_discovered = Counter(
+    "products_discovered_total",
+    "Products discovered from category scans",
+    ["store"],
+)
+
+deals_detected = Counter(
+    "deals_detected_total",
+    "Deals detected from scans",
+    ["store", "discount_tier"],  # 50-60%, 60-70%, 70%+
+)
+
+scan_blocks = Counter(
+    "scan_blocks_total",
+    "Times scanning was blocked",
+    ["store", "block_type"],  # captcha, 403, 429, cloudflare
+)
+
+active_scans = Gauge(
+    "active_category_scans",
+    "Currently running category scans",
+)
+
+# =============================================================================
+# Caching Metrics
+# =============================================================================
+
+cache_hits = Counter(
+    "http_cache_hits_total",
+    "HTTP cache hits (304 responses)",
+    ["store"],
+)
+
+cache_misses = Counter(
+    "http_cache_misses_total",
+    "HTTP cache misses (new content fetched)",
+    ["store"],
+)
+
+# =============================================================================
+# Delta Detection Metrics
+# =============================================================================
+
+delta_skips = Counter(
+    "delta_skip_total",
+    "Products skipped due to no change",
+    ["store"],
+)
+
+delta_changes = Counter(
+    "delta_change_total",
+    "Products detected with changes",
+    ["store"],
+)
+
+# =============================================================================
+# Store Health Metrics
+# =============================================================================
+
+store_response_time = Histogram(
+    "store_response_time_ms",
+    "Response time for store requests in milliseconds",
+    ["store"],
+    buckets=[100, 250, 500, 1000, 2000, 5000, 10000, 30000],
+)
+
+store_error_rate = Gauge(
+    "store_error_rate",
+    "Current error rate for store (0.0 - 1.0)",
+    ["store"],
+)
+
+store_consecutive_failures = Gauge(
+    "store_consecutive_failures",
+    "Number of consecutive failures for store",
+    ["store"],
+)
+
+adaptive_delay_seconds = Gauge(
+    "adaptive_delay_seconds",
+    "Current adaptive delay for store",
+    ["store"],
+)
+
+# =============================================================================
+# Performance Metrics (Enhanced)
+# =============================================================================
+
+scraping_latency = Histogram(
+    "scraping_latency_ms",
+    "Latency for page scraping in milliseconds",
+    ["domain"],
+    buckets=[50, 100, 250, 500, 1000, 2000, 5000, 10000],
+)
+
+proxy_success_rate = Gauge(
+    "proxy_success_rate",
+    "Success rate for proxy (0.0 - 1.0)",
+    ["proxy_id", "proxy_type"],
+)
+
+connection_pool_utilization = Gauge(
+    "connection_pool_utilization",
+    "Connection pool utilization (0.0 - 1.0)",
+    ["domain"],
+)
+
+cache_hit_rate = Gauge(
+    "cache_hit_rate",
+    "Cache hit rate (0.0 - 1.0)",
+    ["store"],
+)
+
+pages_scanned_per_second = Gauge(
+    "pages_scanned_per_second",
+    "Pages scanned per second",
+)
+
+concurrent_requests = Gauge(
+    "concurrent_requests",
+    "Number of concurrent HTTP requests",
+)
+
+scraper_pool_queue_size = Gauge(
+    "scraper_pool_queue_size",
+    "Number of tasks in scraper pool queue",
+)
+
+scraper_pool_active_workers = Gauge(
+    "scraper_pool_active_workers",
+    "Number of active workers in scraper pool",
+)
+
+proxy_avg_latency = Histogram(
+    "proxy_avg_latency_ms",
+    "Average latency for proxy in milliseconds",
+    ["proxy_id", "proxy_type"],
+    buckets=[100, 250, 500, 1000, 2000, 5000, 10000],
+)
+
+residential_proxy_cost = Gauge(
+    "residential_proxy_cost_usd",
+    "Monthly cost for residential proxies in USD",
+)
+
+# =============================================================================
+# Fetch Strategy Metrics
+# =============================================================================
+
+fetch_strategy_attempts = Counter(
+    "fetch_strategy_attempts_total",
+    "Fetch strategy attempts",
+    ["store", "strategy"],
+)
+
+fetch_strategy_success = Counter(
+    "fetch_strategy_success_total",
+    "Successful fetch strategy attempts",
+    ["store", "strategy"],
+)
+
+fetch_strategy_fallback = Counter(
+    "fetch_strategy_fallback_total",
+    "Times fallback strategy was needed",
+    ["store", "from_strategy", "to_strategy"],
+)
+
 # Fetch metrics
 price_fetches_total = Counter(
     "price_fetches_total",
@@ -136,3 +314,107 @@ def record_scheduler_run(job_type: str, success: bool):
     status = "success" if success else "error"
     scheduler_runs_total.labels(job_type=job_type, status=status).inc()
     scheduler_last_run_timestamp.labels(job_type=job_type).set(time.time())
+
+
+# =============================================================================
+# Category Scan Helper Functions
+# =============================================================================
+
+def record_category_scan(store: str, category: str, duration: float, products: int, deals: int):
+    """Record a category scan completion."""
+    category_scan_duration.labels(store=store, category=category).observe(duration)
+    products_discovered.labels(store=store).inc(products)
+    
+    # Categorize deals by discount tier
+    # Note: deals count is passed in, tier categorization happens at detection time
+
+
+def record_deal_detected(store: str, discount_percent: float):
+    """Record a deal detection with discount tier."""
+    if discount_percent >= 70:
+        tier = "70%+"
+    elif discount_percent >= 60:
+        tier = "60-70%"
+    else:
+        tier = "50-60%"
+    deals_detected.labels(store=store, discount_tier=tier).inc()
+
+
+def record_scan_block(store: str, block_type: str):
+    """Record a scan being blocked."""
+    scan_blocks.labels(store=store, block_type=block_type).inc()
+
+
+def increment_active_scans():
+    """Increment the active scans gauge."""
+    active_scans.inc()
+
+
+def decrement_active_scans():
+    """Decrement the active scans gauge."""
+    active_scans.dec()
+
+
+# =============================================================================
+# Caching Helper Functions
+# =============================================================================
+
+def record_cache_hit(store: str):
+    """Record an HTTP cache hit (304 response)."""
+    cache_hits.labels(store=store).inc()
+
+
+def record_cache_miss(store: str):
+    """Record an HTTP cache miss."""
+    cache_misses.labels(store=store).inc()
+
+
+# =============================================================================
+# Delta Detection Helper Functions
+# =============================================================================
+
+def record_delta_skip(store: str, count: int = 1):
+    """Record products skipped due to no change."""
+    delta_skips.labels(store=store).inc(count)
+
+
+def record_delta_change(store: str, count: int = 1):
+    """Record products detected with changes."""
+    delta_changes.labels(store=store).inc(count)
+
+
+# =============================================================================
+# Store Health Helper Functions
+# =============================================================================
+
+def record_store_response(store: str, duration_ms: float, success: bool):
+    """Record a store response for health tracking."""
+    store_response_time.labels(store=store).observe(duration_ms)
+
+
+def update_store_health(store: str, error_rate: float, consecutive_failures: int, delay: float):
+    """Update store health metrics."""
+    store_error_rate.labels(store=store).set(error_rate)
+    store_consecutive_failures.labels(store=store).set(consecutive_failures)
+    adaptive_delay_seconds.labels(store=store).set(delay)
+
+
+# =============================================================================
+# Fetch Strategy Helper Functions
+# =============================================================================
+
+def record_fetch_strategy_attempt(store: str, strategy: str):
+    """Record a fetch strategy attempt."""
+    fetch_strategy_attempts.labels(store=store, strategy=strategy).inc()
+
+
+def record_fetch_strategy_success(store: str, strategy: str):
+    """Record a successful fetch strategy."""
+    fetch_strategy_success.labels(store=store, strategy=strategy).inc()
+
+
+def record_fetch_fallback(store: str, from_strategy: str, to_strategy: str):
+    """Record a fallback to another strategy."""
+    fetch_strategy_fallback.labels(
+        store=store, from_strategy=from_strategy, to_strategy=to_strategy
+    ).inc()

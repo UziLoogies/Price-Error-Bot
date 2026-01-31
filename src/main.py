@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
@@ -18,7 +18,7 @@ from src.db.session import engine
 from src.db.models import Base
 from src.worker.scheduler import setup_scheduler
 from src.worker.tasks import task_runner
-from src.api.routes import alerts, products, rules, stores, webhooks, dashboard, proxies, categories, scans, exclusions
+from src.api.routes import alerts, products, rules, stores, webhooks, dashboard, proxies, categories, scans, exclusions, notifications
 from src import metrics
 from src.ingest.proxy_manager import proxy_rotator
 from src.db.session import AsyncSessionLocal
@@ -67,6 +67,14 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
 
     await task_runner.close()
+    
+    # Close scanner HTTP clients
+    from src.ingest.scan_engine import scan_engine
+    if hasattr(scan_engine, 'scanner') and scan_engine.scanner is not None:
+        try:
+            await scan_engine.scanner.close()
+        except Exception:
+            logger.exception("Error closing scanner HTTP clients")
 
     logger.info("Shutdown complete")
 
@@ -85,7 +93,7 @@ instrumentator = Instrumentator(
     should_ignore_untemplated=True,
     should_respect_env_var=True,
     should_instrument_requests_inprogress=True,
-    excluded_handlers=["/metrics", "/health"],
+    excluded_handlers=["/metrics", "/health", "/favicon.ico"],
     inprogress_name="http_requests_inprogress",
     inprogress_labels=True,
 )
@@ -106,6 +114,7 @@ app.include_router(proxies.router)
 app.include_router(categories.router)
 app.include_router(scans.router)
 app.include_router(exclusions.router)
+app.include_router(notifications.router)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -118,6 +127,12 @@ async def root(request: Request):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty favicon response to avoid 404 noise."""
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":

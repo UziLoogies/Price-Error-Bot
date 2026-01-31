@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from collections import deque
 from typing import Optional
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
@@ -90,7 +90,7 @@ async def get_recent_activity(db: AsyncSession = Depends(get_db), limit: int = 2
     
     result = await db.execute(
         select(PriceHistory)
-        .order_by(PriceHistory.scraped_at.desc())
+        .order_by(PriceHistory.fetched_at.desc())
         .limit(limit)
     )
     history = result.scalars().all()
@@ -110,7 +110,99 @@ async def get_recent_activity(db: AsyncSession = Depends(get_db), limit: int = 2
             "store": product.store if product else "Unknown",
             "sku": product.sku if product else "Unknown",
             "price": float(h.price) if h.price else None,
-            "time": h.scraped_at.strftime("%Y-%m-%d %H:%M:%S") if h.scraped_at else None
+            "time": h.fetched_at.strftime("%Y-%m-%d %H:%M:%S") if h.fetched_at else None
         })
     
     return activities
+
+
+@router.get("/deals")
+async def get_discovered_deals(
+    db: AsyncSession = Depends(get_db),
+    skip: int = 0,
+    limit: int = 50,
+):
+    """
+    Get all discovered deals (latest price history per product).
+    
+    Args:
+        skip: Number of records to skip (for pagination)
+        limit: Maximum number of records to return (default 50, max 200)
+    """
+    # Enforce maximum limit
+    limit = min(limit, 200)
+    
+    # Latest price history per product
+    latest_subq = (
+        select(
+            PriceHistory.product_id,
+            func.max(PriceHistory.fetched_at).label("latest_fetched_at"),
+        )
+        .group_by(PriceHistory.product_id)
+        .subquery()
+    )
+
+    # Base query structure (same filters/joins for both count and data)
+    base_join_conditions = and_(
+        PriceHistory.product_id == latest_subq.c.product_id,
+        PriceHistory.fetched_at == latest_subq.c.latest_fetched_at,
+    )
+
+    # Count total matching records (without limit/offset)
+    count_query = (
+        select(func.count(PriceHistory.id))
+        .join(
+            latest_subq,
+            base_join_conditions,
+        )
+        .join(Product, Product.id == PriceHistory.product_id)
+    )
+    count_result = await db.execute(count_query)
+    total_count = count_result.scalar() or 0
+
+    # Query with pagination
+    query = (
+        select(PriceHistory, Product)
+        .join(
+            latest_subq,
+            base_join_conditions,
+        )
+        .join(Product, Product.id == PriceHistory.product_id)
+        .order_by(PriceHistory.fetched_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    deals = []
+    for price_history, product in rows:
+        orig = price_history.original_price or product.msrp
+        discount_percent = None
+        if orig and price_history.price and orig > 0:
+            discount_percent = float((orig - price_history.price) / orig * 100)
+
+        deals.append(
+            {
+                "id": price_history.id,
+                "product_id": product.id,
+                "store": product.store,
+                "sku": product.sku,
+                "title": product.title,
+                "url": product.url,
+                "price": float(price_history.price) if price_history.price else None,
+                "original_price": float(price_history.original_price) if price_history.original_price else None,
+                "msrp": float(product.msrp) if product.msrp else None,
+                "discount_percent": discount_percent,
+                "timestamp": price_history.fetched_at.isoformat() if price_history.fetched_at else None,
+            }
+        )
+
+    return {
+        "deals": deals,
+        "skip": skip,
+        "limit": limit,
+        "count": len(deals),
+        "total_count": total_count
+    }

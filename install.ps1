@@ -65,8 +65,22 @@ function Request-Elevation {
             $scriptPath = $PSCommandPath
         }
         
+        # Build argument list with script parameters
+        $argList = @("-ExecutionPolicy", "Bypass", "-File", "`"$scriptPath`"")
+        
+        # Forward script parameters
+        if ($SkipPrerequisites) {
+            $argList += "-SkipPrerequisites"
+        }
+        if ($SkipDocker) {
+            $argList += "-SkipDocker"
+        }
+        if ($Force) {
+            $argList += "-Force"
+        }
+        
         try {
-            Start-Process powershell.exe -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`""
+            Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
             exit 0
         } catch {
             Write-Error "Failed to elevate. Please run PowerShell as Administrator."
@@ -84,7 +98,7 @@ function Test-WingetAvailable {
     }
 }
 
-function Refresh-Path {
+function Update-Path {
     Write-Step "Refreshing PATH environment..."
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
@@ -125,7 +139,7 @@ function Test-GitInstalled {
 
 function Test-DockerRunning {
     try {
-        $info = docker info 2>&1
+        $null = docker info 2>&1
         return $LASTEXITCODE -eq 0
     } catch {
         return $false
@@ -232,7 +246,7 @@ if (Test-PythonInstalled) {
     Write-Step "Installing Python 3.11..."
     try {
         winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
-        Refresh-Path
+        Update-Path
         
         # Verify installation
         Start-Sleep -Seconds 2
@@ -265,7 +279,7 @@ if (Test-DockerInstalled) {
     Write-Info "This may take several minutes..."
     try {
         winget install Docker.DockerDesktop --silent --accept-package-agreements --accept-source-agreements
-        Refresh-Path
+        Update-Path
         Write-Success "Docker Desktop installed"
         Write-Warning "You may need to restart your computer for Docker to work properly."
         Write-Warning "After restart, run this installer again with -SkipPrerequisites"
@@ -298,7 +312,7 @@ if (Test-GitInstalled) {
     Write-Step "Installing Git..."
     try {
         winget install Git.Git --silent --accept-package-agreements --accept-source-agreements
-        Refresh-Path
+        Update-Path
         Write-Success "Git installed successfully"
     } catch {
         Write-Warning "Failed to install Git. This is optional and installation will continue."
@@ -347,7 +361,7 @@ if ((Test-Path $venvPath) -and -not $Force) {
 } else {
     Write-Step "Creating virtual environment..."
     try {
-        python -m venv venv
+        python -m venv $venvPath
         Write-Success "Virtual environment created"
     } catch {
         Write-Error "Failed to create virtual environment: $_"
@@ -493,7 +507,15 @@ if (-not $SkipDocker) {
             $retries++
         }
         
-        Write-Success "Database containers are ready"
+        # Validate final state after loop
+        $pgHealth = docker inspect --format='{{.State.Health.Status}}' price_bot_postgres 2>$null
+        if ($pgHealth -eq "healthy") {
+            Write-Success "Database containers are ready"
+        } else {
+            Write-Error "PostgreSQL container is not healthy after $maxRetries attempts (status: $pgHealth)"
+            Write-Info "Please check Docker containers and try again."
+            exit 1
+        }
     } catch {
         Write-Error "Failed to start database containers: $_"
         Write-Info "Make sure Docker Desktop is running and try again."

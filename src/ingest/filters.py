@@ -355,3 +355,142 @@ class ExclusionManager:
 
 # Global exclusion manager instance
 exclusion_manager = ExclusionManager()
+
+
+# Enhanced filtering with MSRP context and category-specific rules
+
+async def filter_with_msrp_context(
+    product: DiscoveredProduct,
+    product_db_obj=None,
+    is_clearance: bool = False,
+) -> tuple[bool, Optional[str]]:
+    """
+    Filter product using MSRP context.
+    
+    Args:
+        product: Discovered product
+        product_db_obj: Optional Product database object
+        is_clearance: Whether product is in clearance section
+        
+    Returns:
+        Tuple of (should_include: bool, reason: str or None)
+    """
+    from src.detect.msrp_service import msrp_service
+    
+    if not product_db_obj:
+        return True, None
+    
+    # Get MSRP
+    msrp = await msrp_service.get_msrp(product_db_obj)
+    if not msrp or msrp <= 0:
+        return True, None  # No MSRP available, can't filter
+    
+    # Calculate discount from MSRP
+    if product.current_price and product.current_price > 0:
+        discount = float((1 - product.current_price / msrp) * 100)
+        
+        # Flag if >90% off MSRP (unless clearance)
+        if discount >= 90.0 and not is_clearance:
+            return False, f"{discount:.1f}% off MSRP (${msrp:.2f}) - potential error"
+    
+    return True, None
+
+
+def get_category_specific_rules(category_name: str) -> Dict[str, float]:
+    """
+    Get category-specific filtering rules.
+    
+    Args:
+        category_name: Category name
+        
+    Returns:
+        Dict with category-specific thresholds
+    """
+    from src.detect.deal_detector import CATEGORY_THRESHOLDS
+    
+    category_lower = category_name.lower()
+    
+    # Check for exact match
+    if category_lower in CATEGORY_THRESHOLDS:
+        return CATEGORY_THRESHOLDS[category_lower]
+    
+    # Check for partial match
+    for cat_key, rules in CATEGORY_THRESHOLDS.items():
+        if cat_key in category_lower or category_lower in cat_key:
+            return rules
+    
+    # Default rules
+    return {
+        "min_discount_percent": 40.0,
+        "msrp_threshold": 0.60,
+        "min_price": 10.0,
+        "max_price": 10000.0,
+    }
+
+
+def is_clearance_section(category_name: str, url: str) -> bool:
+    """
+    Detect if category is a clearance section.
+    
+    Args:
+        category_name: Category name
+        url: Category URL
+        
+    Returns:
+        True if appears to be clearance section
+    """
+    text = f"{category_name} {url}".lower()
+    clearance_keywords = [
+        "clearance",
+        "closeout",
+        "final sale",
+        "liquidation",
+        "overstock",
+    ]
+    return any(keyword in text for keyword in clearance_keywords)
+
+
+async def apply_enhanced_filtering(
+    product: DiscoveredProduct,
+    category_name: Optional[str] = None,
+    product_db_obj=None,
+) -> tuple[bool, Optional[str]]:
+    """
+    Apply enhanced filtering with MSRP context and category-specific rules.
+    
+    Args:
+        product: Discovered product
+        category_name: Category name
+        product_db_obj: Optional Product database object
+        
+    Returns:
+        Tuple of (should_include: bool, reason: str or None)
+    """
+    # Check if clearance section (allow deeper discounts)
+    is_clearance = False
+    if category_name:
+        is_clearance = is_clearance_section(category_name, product.url or "")
+    
+    # Apply MSRP-based filtering
+    if product_db_obj:
+        should_include, reason = await filter_with_msrp_context(
+            product,
+            product_db_obj,
+            is_clearance,
+        )
+        if not should_include:
+            return False, reason
+    
+    # Apply category-specific rules
+    if category_name:
+        rules = get_category_specific_rules(category_name)
+        
+        # Check price range
+        if product.current_price:
+            if rules.get("min_price") and product.current_price < Decimal(str(rules["min_price"])):
+                return False, f"Price ${product.current_price:.2f} below category minimum ${rules['min_price']:.2f}"
+            
+            if rules.get("max_price") and product.current_price > Decimal(str(rules["max_price"])):
+                return False, f"Price ${product.current_price:.2f} above category maximum ${rules['max_price']:.2f}"
+    
+    return True, None
