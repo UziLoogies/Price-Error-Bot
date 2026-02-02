@@ -60,6 +60,28 @@ def format_discord_embed(
         "value": f"{deal.discount_percent:.1f}% OFF",
         "inline": True,
     })
+
+    if deal.baseline_price:
+        baseline_value = f"${deal.baseline_price:.2f}"
+        if deal.baseline_source:
+            baseline_value += f" ({deal.baseline_source})"
+        fields.append({
+            "name": "Baseline",
+            "value": baseline_value,
+            "inline": True,
+        })
+    elif deal.baseline_90d_median or deal.baseline_30d_median:
+        parts = []
+        if deal.baseline_90d_median:
+            parts.append(f"90d: ${deal.baseline_90d_median:.2f}")
+        if deal.baseline_30d_median:
+            parts.append(f"30d: ${deal.baseline_30d_median:.2f}")
+        if parts:
+            fields.append({
+                "name": "Baseline Medians",
+                "value": " | ".join(parts),
+                "inline": True,
+            })
     
     fields.append({
         "name": "Confidence",
@@ -80,6 +102,27 @@ def format_discord_embed(
             "value": ", ".join(deal.detection_signals),
             "inline": False,
         })
+
+    if deal.verification_details:
+        verification_parts = []
+        scan_pass = deal.verification_details.get("scan_pass")
+        proxy_type = deal.verification_details.get("proxy_type")
+        sold_median = deal.verification_details.get("sold_median_price")
+        requirements = deal.verification_details.get("requirements")
+        if scan_pass:
+            verification_parts.append(f"Scan: {scan_pass}")
+        if proxy_type:
+            verification_parts.append(f"Proxy: {proxy_type}")
+        if sold_median:
+            verification_parts.append(f"Sold median: ${sold_median}")
+        if requirements:
+            verification_parts.append(f"Req: {', '.join(requirements)}")
+        if verification_parts:
+            fields.append({
+                "name": "Verification",
+                "value": " | ".join(verification_parts),
+                "inline": False,
+            })
     
     # Build embed
     embed = {
@@ -145,9 +188,40 @@ def format_telegram_message(
         f"📦 SKU: `{product.sku}`",
         f"📊 Confidence: {deal.confidence * 100:.0f}%",
     ])
+
+    if deal.baseline_price:
+        baseline_line = f"📈 Baseline: ${deal.baseline_price:.2f}"
+        if deal.baseline_source:
+            baseline_line += f" ({deal.baseline_source})"
+        lines.append(baseline_line)
+    elif deal.baseline_90d_median or deal.baseline_30d_median:
+        parts = []
+        if deal.baseline_90d_median:
+            parts.append(f"90d ${deal.baseline_90d_median:.2f}")
+        if deal.baseline_30d_median:
+            parts.append(f"30d ${deal.baseline_30d_median:.2f}")
+        if parts:
+            lines.append(f"📈 Baselines: {' | '.join(parts)}")
     
     if deal.reason:
         lines.extend(["", f"ℹ️ {_escape_markdown(deal.reason[:200])}"])
+
+    if deal.verification_details:
+        verification_parts = []
+        scan_pass = deal.verification_details.get("scan_pass")
+        proxy_type = deal.verification_details.get("proxy_type")
+        sold_median = deal.verification_details.get("sold_median_price")
+        requirements = deal.verification_details.get("requirements")
+        if scan_pass:
+            verification_parts.append(f"Scan: {scan_pass}")
+        if proxy_type:
+            verification_parts.append(f"Proxy: {proxy_type}")
+        if sold_median:
+            verification_parts.append(f"Sold median: ${sold_median}")
+        if requirements:
+            verification_parts.append(f"Req: {', '.join(requirements)}")
+        if verification_parts:
+            lines.extend(["", "✅ " + _escape_markdown(" | ".join(verification_parts))])
     
     lines.extend([
         "",
@@ -221,6 +295,35 @@ def format_slack_blocks(
                 },
             ],
         })
+    elif deal.baseline_price:
+        blocks.append({
+            "type": "section",
+            "fields": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Baseline:*\n${deal.baseline_price:.2f}",
+                },
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Confidence:*\n{deal.confidence * 100:.0f}%",
+                },
+            ],
+        })
+
+    if deal.baseline_price and product.original_price:
+        blocks.append({
+            "type": "section",
+            "fields": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Baseline:*\n${deal.baseline_price:.2f}",
+                },
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Source:*\n{deal.baseline_source or 'unknown'}",
+                },
+            ],
+        })
     
     if deal.reason:
         blocks.append({
@@ -230,6 +333,29 @@ def format_slack_blocks(
                 "text": f"*Reason:* {deal.reason[:500]}",
             },
         })
+
+    if deal.verification_details:
+        parts = []
+        scan_pass = deal.verification_details.get("scan_pass")
+        proxy_type = deal.verification_details.get("proxy_type")
+        sold_median = deal.verification_details.get("sold_median_price")
+        requirements = deal.verification_details.get("requirements")
+        if scan_pass:
+            parts.append(f"Scan: {scan_pass}")
+        if proxy_type:
+            parts.append(f"Proxy: {proxy_type}")
+        if sold_median:
+            parts.append(f"Sold median: ${sold_median}")
+        if requirements:
+            parts.append(f"Req: {', '.join(requirements)}")
+        if parts:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Verification:* " + " | ".join(parts),
+                },
+            })
     
     # Add store/SKU context
     blocks.append({
@@ -289,6 +415,11 @@ def format_generic_payload(
             "reason": deal.reason,
             "category": deal.category,
             "signals": deal.detection_signals,
+            "baseline_price": float(deal.baseline_price) if deal.baseline_price else None,
+            "baseline_source": deal.baseline_source,
+            "baseline_30d_median": float(deal.baseline_30d_median) if deal.baseline_30d_median else None,
+            "baseline_90d_median": float(deal.baseline_90d_median) if deal.baseline_90d_median else None,
+            "verification": deal.verification_details,
         },
         "product": {
             "sku": product.sku,

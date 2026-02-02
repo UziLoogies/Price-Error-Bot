@@ -80,6 +80,46 @@ active_scans = Gauge(
 )
 
 # =============================================================================
+# Signal-Driven Scanning Metrics
+# =============================================================================
+
+signals_ingested_total = Counter(
+    "signals_ingested_total",
+    "Signals ingested from third-party sources",
+    ["source_tool"],
+)
+
+candidates_created_total = Counter(
+    "candidates_created_total",
+    "Candidates created from signals",
+    ["retailer"],
+)
+
+escalations_total = Counter(
+    "escalations_total",
+    "Two-pass escalations triggered",
+    ["trigger"],
+)
+
+residential_requests_total = Counter(
+    "residential_requests_total",
+    "Residential verification requests",
+    ["retailer"],
+)
+
+verified_deals_total = Counter(
+    "verified_deals_total",
+    "Verified deals after two-pass scanning",
+    ["retailer", "baseline_source"],
+)
+
+false_positive_rate = Gauge(
+    "false_positive_rate",
+    "False positive rate by retailer and rule",
+    ["retailer", "detection_rule"],
+)
+
+# =============================================================================
 # Caching Metrics
 # =============================================================================
 
@@ -290,6 +330,29 @@ scheduler_last_run_timestamp = Gauge(
     ["job_type"],
 )
 
+# Scan lock metrics
+scan_lock_acquired_total = Counter(
+    "scan_lock_acquired_total",
+    "Total number of scan lock acquisitions",
+    ["trigger"],
+)
+
+scan_lock_skipped_total = Counter(
+    "scan_lock_skipped_total",
+    "Total number of scan lock skips",
+    ["trigger", "reason"],
+)
+
+scan_lock_stale_recovered_total = Counter(
+    "scan_lock_stale_recovered_total",
+    "Total number of stale scan locks recovered",
+)
+
+scan_lock_heartbeat_age_seconds = Gauge(
+    "scan_lock_heartbeat_age_seconds",
+    "Age of the scan lock heartbeat in seconds",
+)
+
 # Database metrics
 db_queries_total = Counter(
     "db_queries_total",
@@ -360,6 +423,28 @@ def record_scheduler_run(job_type: str, success: bool):
     status = "success" if success else "error"
     scheduler_runs_total.labels(job_type=job_type, status=status).inc()
     scheduler_last_run_timestamp.labels(job_type=job_type).set(time.time())
+
+
+def record_scan_lock_acquired(trigger: str):
+    """Record a scan lock acquisition."""
+    scan_lock_acquired_total.labels(trigger=trigger).inc()
+
+
+def record_scan_lock_skipped(trigger: str, reason: str):
+    """Record a scan lock skip."""
+    scan_lock_skipped_total.labels(trigger=trigger, reason=reason).inc()
+
+
+def record_scan_lock_stale_recovered():
+    """Record recovery of a stale scan lock."""
+    scan_lock_stale_recovered_total.inc()
+
+
+def update_scan_lock_heartbeat_age(age_seconds: float | None):
+    """Update the scan lock heartbeat age gauge."""
+    if age_seconds is None:
+        return
+    scan_lock_heartbeat_age_seconds.set(age_seconds)
 
 
 # =============================================================================
@@ -690,3 +775,38 @@ def record_attribute_extraction(method: str, latency: float, success: bool, attr
     if success and attributes_found:
         for attr_type in attributes_found:
             attribute_extraction_success.labels(method=method, attribute_type=attr_type).inc()
+
+
+# =============================================================================
+# Signal-Driven Scanning Helper Functions
+# =============================================================================
+
+def record_signal_ingested(source_tool: str):
+    """Record an ingested signal."""
+    signals_ingested_total.labels(source_tool=source_tool).inc()
+
+
+def record_candidate_created(retailer: str):
+    """Record a candidate creation."""
+    candidates_created_total.labels(retailer=retailer).inc()
+
+
+def record_escalation(trigger: str):
+    """Record a two-pass escalation trigger."""
+    escalations_total.labels(trigger=trigger).inc()
+
+
+def record_residential_request(retailer: str):
+    """Record a residential verification request."""
+    residential_requests_total.labels(retailer=retailer).inc()
+
+
+def record_verified_deal(retailer: str, baseline_source: str | None = None):
+    """Record a verified deal."""
+    baseline_label = baseline_source or "unknown"
+    verified_deals_total.labels(retailer=retailer, baseline_source=baseline_label).inc()
+
+
+def update_false_positive_rate(retailer: str, detection_rule: str, rate: float):
+    """Update false positive rate gauge."""
+    false_positive_rate.labels(retailer=retailer, detection_rule=detection_rule).set(rate)

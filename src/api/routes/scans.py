@@ -3,15 +3,22 @@
 import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.deps import get_database
+from src.api.deps import get_database, require_admin_api_key
 from src.db.models import ScanJob, StoreCategory
 from src.ingest.scan_engine import scan_engine, ScanProgress
+from src.worker.tasks import task_runner
+from src.worker.scan_lock import scan_lock_manager
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
@@ -64,10 +71,6 @@ class ScanStatsResponse(BaseModel):
     total_deals_found: int
     average_success_rate: float
     last_scan_time: Optional[datetime]
-
-
-# Active scan tracking
-_active_scan_task = None
 
 
 @router.get("/jobs", response_model=List[ScanJobResponse])
@@ -185,34 +188,28 @@ async def trigger_scan(
     """
     Trigger a manual scan.
     
-    Can specify category_ids for specific categories,
-    or store to scan all categories for a store,
-    or neither for all enabled categories.
+    Uses the centralized scan_entrypoint with trigger="manual".
+    If a scan is already running, the request is queued to run after completion.
     """
-    global _active_scan_task
-    
-    # Check if scan already running
-    if _active_scan_task and not _active_scan_task.done():
-        raise HTTPException(
-            status_code=409,
-            detail="A scan is already in progress. Wait for it to complete."
-        )
-    
-    async def run_scan():
-        try:
-            await scan_engine.trigger_manual_scan(
-                category_ids=request.category_ids,
-                store=request.store,
-            )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Manual scan failed: {e}")
-    
-    # Start scan in background
-    _active_scan_task = asyncio.create_task(run_scan())
-    
+    job_id = f"manual_scan_{uuid4().hex}"
+    lock_info = await scan_lock_manager.get_lock_info()
+    if lock_info:
+        await scan_lock_manager.request_run_after_current()
+        return {
+            "message": "Scan queued (lock held)",
+            "queued": True,
+            "job_id": job_id,
+            "category_ids": request.category_ids,
+            "store": request.store,
+        }
+
+    # Run scan asynchronously (lock handled in scan_entrypoint)
+    background_tasks.add_task(task_runner.scan_entrypoint, trigger="manual")
+
     return {
         "message": "Scan triggered successfully",
+        "queued": False,
+        "job_id": job_id,
         "category_ids": request.category_ids,
         "store": request.store,
     }
@@ -229,24 +226,92 @@ async def trigger_category_scan(
     category = await db.get(StoreCategory, category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
-    
-    global _active_scan_task
-    
-    if _active_scan_task and not _active_scan_task.done():
-        raise HTTPException(
-            status_code=409,
-            detail="A scan is already in progress"
-        )
-    
-    async def run_scan():
-        await scan_engine.trigger_manual_scan(category_ids=[category_id])
-    
-    _active_scan_task = asyncio.create_task(run_scan())
-    
+
+    job_id = f"manual_scan_category_{category_id}_{uuid4().hex}"
+    lock_info = await scan_lock_manager.get_lock_info()
+    if lock_info:
+        await scan_lock_manager.request_run_after_current()
+        return {
+            "message": f"Scan queued for category: {category.category_name}",
+            "queued": True,
+            "job_id": job_id,
+            "category_id": category_id,
+            "store": category.store,
+        }
+
+    background_tasks.add_task(task_runner.scan_entrypoint, trigger="manual")
+
     return {
         "message": f"Scan triggered for category: {category.category_name}",
+        "queued": False,
+        "job_id": job_id,
         "category_id": category_id,
         "store": category.store,
+    }
+
+
+@router.post("/admin/force-unlock")
+async def force_unlock_scan(
+    db: AsyncSession = Depends(get_database),
+    _admin: None = Depends(require_admin_api_key),
+):
+    """
+    Force unlock a stuck scan (admin only).
+    
+    This endpoint:
+    1. Deletes the Redis lock if present
+    2. Marks any RUNNING ScanJob as FAILED
+    3. Returns current scan state
+    
+    Note: In production, this should be protected with authentication/authorization.
+    """
+    from src.worker.scan_lock import scan_lock_manager
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Get current lock info
+    lock_info = await scan_lock_manager.get_lock_info()
+    
+    if not lock_info:
+        return {
+            "message": "No lock found",
+            "lock_info": None,
+            "jobs_updated": 0,
+        }
+    
+    run_id = lock_info.get("run_id")
+    
+    # Find and update RUNNING jobs
+    jobs_updated = 0
+    if run_id:
+        query = select(ScanJob).where(
+            ScanJob.run_id == run_id,
+            ScanJob.status == "running"
+        )
+        result = await db.execute(query)
+        jobs = result.scalars().all()
+        
+        for job in jobs:
+            job.status = "failed"
+            job.completed_at = datetime.utcnow()
+            job.error_message = "Forced unlock by admin"
+            jobs_updated += 1
+        
+        await db.commit()
+    
+    # Delete lock
+    await scan_lock_manager.force_unlock()
+    
+    logger.warning(
+        f"Admin force-unlock executed (run_id: {run_id[:16] if run_id else 'unknown'}..., "
+        f"jobs_updated: {jobs_updated})"
+    )
+    
+    return {
+        "message": "Lock force-unlocked",
+        "lock_info": lock_info,
+        "jobs_updated": jobs_updated,
     }
 
 

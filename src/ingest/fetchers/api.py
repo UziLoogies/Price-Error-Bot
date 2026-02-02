@@ -60,12 +60,13 @@ class APIFetcher(BaseFetcher):
             await self._http_client.aclose()
             self._http_client = None
     
-    async def fetch(self, sku: str) -> RawPriceData:
+    async def fetch(self, sku: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """
         Fetch product data from API.
-        
+
         Args:
             sku: Product SKU/identifier
+            proxy_type: Optional proxy type (unused)
             
         Returns:
             RawPriceData with price information

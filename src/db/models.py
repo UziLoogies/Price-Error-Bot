@@ -241,6 +241,8 @@ class StoreCategory(Base):
     deals_found: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_error_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cooldown_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    broken_url: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
@@ -272,7 +274,9 @@ class ScanJob(Base):
     __tablename__ = "scan_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)  # UUID hex for lock tracking
     job_type: Mapped[str] = mapped_column(String(32), nullable=False)  # 'category', 'product', 'manual'
+    trigger: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # 'scheduled' | 'manual'
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)  # pending, running, completed, failed
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -513,3 +517,132 @@ class LLMFeedback(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
+
+
+class SignalSource(Base):
+    """Third-party signal source configuration."""
+
+    __tablename__ = "signal_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    retailer: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_tool: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    config_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    signals: Mapped[list["Signal"]] = relationship(
+        "Signal", back_populates="source", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("retailer", "source_tool", name="uq_signal_source_retailer_tool"),
+    )
+
+
+class Signal(Base):
+    """Signals ingested from third-party tools."""
+
+    __tablename__ = "signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("signal_sources.id"), nullable=False
+    )
+    retailer: Mapped[str] = mapped_column(String(32), nullable=False)
+    product_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    detected_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    detected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    signal_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    source: Mapped["SignalSource"] = relationship("SignalSource", back_populates="signals")
+    candidates: Mapped[list["Candidate"]] = relationship(
+        "Candidate", back_populates="source_signal"
+    )
+
+
+class Candidate(Base):
+    """Candidate queue entries for verification."""
+
+    __tablename__ = "candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    retailer: Mapped[str] = mapped_column(String(32), nullable=False)
+    product_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_signal_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("signals.id"), nullable=True
+    )
+    priority_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", nullable=False
+    )  # pending, scanning_datacenter, scanning_residential, verified, rejected
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    escalation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    source_signal: Mapped[Optional["Signal"]] = relationship(
+        "Signal", back_populates="candidates"
+    )
+    evidence: Mapped[list["ScanEvidence"]] = relationship(
+        "ScanEvidence", back_populates="candidate", cascade="all, delete-orphan"
+    )
+
+
+class BaselineHistory(Base):
+    """Baseline calculation history with provenance."""
+
+    __tablename__ = "baseline_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    baseline_30d_median: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
+    baseline_90d_median: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
+    baseline_msrp: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
+    baseline_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    data_freshness_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class ScanEvidence(Base):
+    """Evidence recorded during candidate verification scans."""
+
+    __tablename__ = "scan_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("candidates.id"), nullable=False
+    )
+    scan_pass: Mapped[str] = mapped_column(String(32), nullable=False)  # datacenter, residential
+    proxy_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    html_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    screenshot_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    price_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stock_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    observed_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    candidate: Mapped["Candidate"] = relationship("Candidate", back_populates="evidence")

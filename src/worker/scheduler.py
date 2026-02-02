@@ -9,7 +9,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.worker.tasks import task_runner
 from src.worker.baseline_job import run_baseline_aggregation
+from src.worker.scan_watchdog import scan_watchdog_check
 from src.detect.ml_trainer import train_isolation_forest
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -77,26 +79,42 @@ def setup_scheduler() -> AsyncIOScheduler:
     """
     Setup and configure APScheduler.
     
-    Category-first scanning approach:
-    - Scans store category pages every 5 minutes to discover deals
-    - No individual product tracking - all discovery via categories
+    Scheduling overview:
+    - Category scans run at settings.fetch_interval_minutes when scan_mode includes category
+    - Signal scans run at settings.signal_ingest_interval_minutes when scan_mode includes signal
 
     Returns:
         Configured scheduler instance
     """
     scheduler = AsyncIOScheduler()
+    scan_mode = getattr(settings, "scan_mode", "category").lower()
+    scan_interval = max(1, int(getattr(settings, "fetch_interval_minutes", 5)))
+    signal_interval = max(1, int(getattr(settings, "signal_ingest_interval_minutes", 10)))
 
-    # Category scanning job - run every 5 minutes for active deal discovery
-    scheduler.add_job(
-        task_runner.scan_store_categories,
-        IntervalTrigger(minutes=5),
-        id="category_scan",
-        name="Scan store categories for deals",
-        max_instances=2,
-        coalesce=True,
-        misfire_grace_time=300,
-        replace_existing=True,
-    )
+    if scan_mode in ("category", "hybrid"):
+        # Category scanning job - run at configured interval for active deal discovery
+        scheduler.add_job(
+            task_runner.scan_store_categories,
+            IntervalTrigger(minutes=scan_interval),
+            id="category_scan",
+            name="Scan store categories for deals",
+            max_instances=1,  # Prevent overlapping runs
+            coalesce=True,
+            misfire_grace_time=600,  # Increased from 300 to 600 seconds
+            replace_existing=True,
+        )
+
+    if scan_mode in ("signal", "hybrid") and settings.third_party_enabled:
+        scheduler.add_job(
+            task_runner.scan_signal_sources,
+            IntervalTrigger(minutes=signal_interval),
+            id="signal_scan",
+            name="Ingest third-party signals",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+            replace_existing=True,
+        )
 
     # Daily baseline recalculation - run at 3 AM (for any discovered products)
     scheduler.add_job(
@@ -128,11 +146,37 @@ def setup_scheduler() -> AsyncIOScheduler:
         max_instances=1,
         replace_existing=True,
     )
+    
+    # Scan watchdog - run every 2 minutes to detect stale locks
+    scheduler.add_job(
+        scan_watchdog_check,
+        IntervalTrigger(seconds=settings.scan_watchdog_interval_seconds),
+        id="scan_watchdog",
+        name="Scan lock watchdog",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
+    category_desc = (
+        f"category scan every {scan_interval} minutes"
+        if scan_mode in ("category", "hybrid")
+        else "category scan disabled"
+    )
+    signal_desc = (
+        f"signal scan every {signal_interval} minutes"
+        if scan_mode in ("signal", "hybrid") and settings.third_party_enabled
+        else "signal scan disabled"
+    )
 
     logger.info(
-        "Scheduler configured: category scan every 5 minutes, "
-        "baseline recalculation at 3 AM, baseline aggregation every 6 hours, "
-        "ML training on Sundays at 4 AM"
+        "Scheduler configured: scan_mode=%s, %s, %s, baseline recalculation at 3 AM, "
+        "baseline aggregation every 6 hours, ML training on Sundays at 4 AM, "
+        "scan watchdog every %d seconds",
+        scan_mode,
+        category_desc,
+        signal_desc,
+        settings.scan_watchdog_interval_seconds,
     )
 
     return scheduler

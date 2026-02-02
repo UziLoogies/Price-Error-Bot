@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Keepa API (optional)
     keepa_api_key: str = ""
 
+    # Admin API Key (for protected admin endpoints)
+    admin_api_key: str = ""
+
     # App Settings
     debug: bool = False
     log_level: str = "INFO"
@@ -28,6 +31,41 @@ class Settings(BaseSettings):
     fetch_interval_minutes: int = 5
     dedupe_ttl_hours: int = 12
     cooldown_minutes: int = 60
+    
+    # ======================================================================
+    # Signal-Driven Scanning Settings
+    # ======================================================================
+    third_party_enabled: bool = True
+    scan_mode: str = "hybrid"  # category | signal | hybrid
+    signal_ingest_interval_minutes: int = 10
+    signal_candidate_max_per_retailer_per_hour: int = 200
+    
+    # Proxy pools for two-pass scanning
+    datacenter_proxy_pool: str = "datacenter"
+    residential_proxy_pool: str = "residential"
+    max_residential_requests_per_hour: int = 100
+    max_residential_requests_per_day: int = 1000
+    escalation_score_threshold: float = 0.7
+    
+    # Baseline selection priority
+    baseline_priority_order: list[str] = ["90d_median", "30d_median", "msrp", "launch_price"]
+    
+    # Signal sources configuration (retailer -> tool + settings)
+    signal_sources: dict[str, dict] = {
+        "amazon_us": {"tool": "keepa", "enabled": True},
+        "walmart": {"tool": "brickseek", "enabled": True},
+        "target": {"tool": "brickseek", "enabled": True},
+        "bestbuy": {"tool": "pricelasso", "enabled": True},
+        "costco": {"tool": "warehouserunner", "enabled": True},
+        "newegg": {"tool": "glassit", "enabled": True},
+        "ebay": {"tool": "watchcount", "enabled": True},
+    }
+
+    # Scan Lock Settings
+    scan_lock_ttl_seconds: int = 7200  # 2 hours
+    scan_lock_heartbeat_interval_seconds: int = 45
+    max_scan_duration_seconds: int = 7200  # 2 hours
+    scan_watchdog_interval_seconds: int = 120  # 2 minutes
 
     # Rate Limiting
     max_concurrent_requests: int = 10
@@ -53,8 +91,17 @@ class Settings(BaseSettings):
 
     # Session Management
     session_storage_path: str = "data/sessions"
+    session_ttl_hours: int = 168  # 7 days
+    max_persistent_contexts: int = 10  # Max Playwright persistent contexts to keep in memory
     headless_browser_timeout: int = 30
     category_request_timeout: float = 60.0  # Increased from 45s to 60s for better reliability
+    
+    # Debug Bundle Settings
+    debug_bundle_path: str = "data/debug_bundles"
+    
+    # Category Cooldown Settings
+    category_cooldown_hours_403: int = 24  # Cooldown after 403/BLOCKED
+    category_cooldown_hours_timeout: int = 1  # Cooldown after TIMEOUT
 
     # Retailer-specific rate limits (seconds between requests)
     retailer_rate_limits: dict[str, dict] = {

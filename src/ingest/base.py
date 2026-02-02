@@ -42,12 +42,13 @@ class BaseFetcher(ABC):
     """Abstract base class for price fetchers."""
 
     @abstractmethod
-    async def fetch(self, identifier: str) -> RawPriceData:
+    async def fetch(self, identifier: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """
         Fetch price data for a product.
 
         Args:
             identifier: Product identifier (ASIN for Amazon, SKU for others)
+            proxy_type: Optional proxy type (datacenter/residential/isp)
 
         Returns:
             RawPriceData object with price information

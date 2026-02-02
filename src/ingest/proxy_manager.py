@@ -21,6 +21,7 @@ class ProxyInfo:
     port: int
     username: Optional[str] = None
     password: Optional[str] = None
+    proxy_type: str = "datacenter"
     
     @property
     def url(self) -> str:
@@ -89,6 +90,7 @@ class ProxyRotator:
                     port=p.port,
                     username=p.username,
                     password=p.password,
+                    proxy_type=p.proxy_type or "datacenter",
                 )
                 for p in proxy_models
             ]
@@ -111,12 +113,17 @@ class ProxyRotator:
         consecutive_403s = self._consecutive_403_failures.get(proxy_id, 0)
         return consecutive_403s >= self._max_consecutive_403s
     
-    async def get_next_proxy(self, exclude_ids: Optional[set[int]] = None) -> Optional[ProxyInfo]:
+    async def get_next_proxy(
+        self,
+        exclude_ids: Optional[set[int]] = None,
+        proxy_type: Optional[str] = None,
+    ) -> Optional[ProxyInfo]:
         """
         Get next proxy in rotation (round-robin), excluding specified proxy IDs and proxies in cooldown.
         
         Args:
             exclude_ids: Set of proxy IDs to exclude from selection
+            proxy_type: Optional proxy type filter (datacenter/residential/isp)
             
         Returns:
             ProxyInfo if available, None otherwise
@@ -146,8 +153,11 @@ class ProxyRotator:
                 if consecutive_403s >= self._max_consecutive_403s:
                     excluded.add(proxy_id)
             
-            # Filter out excluded proxies
-            available_proxies = [p for p in self._proxies if p.id not in excluded]
+            # Filter out excluded proxies and proxy type if requested
+            available_proxies = [
+                p for p in self._proxies
+                if p.id not in excluded and (not proxy_type or p.proxy_type == proxy_type)
+            ]
             
             if not available_proxies:
                 logger.warning(
@@ -366,8 +376,12 @@ class ProxyRotator:
         """Get number of available proxies."""
         return len(self._proxies)
     
-    def has_proxies(self) -> bool:
-        """Check if any proxies are available."""
+    def has_proxies(self, proxy_type: Optional[str] = None) -> bool:
+        """Check if any proxies are available (optionally by type)."""
+        if not self._proxies:
+            return False
+        if proxy_type:
+            return any(p.proxy_type == proxy_type for p in self._proxies)
         return len(self._proxies) > 0
     
     async def refresh(self) -> None:

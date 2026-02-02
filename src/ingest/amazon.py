@@ -41,12 +41,13 @@ class AmazonFetcher(BaseFetcher):
             await self._http_client.aclose()
             self._http_client = None
 
-    async def fetch(self, asin: str) -> RawPriceData:
+    async def fetch(self, asin: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """
         Fetch Amazon price data.
 
         Args:
             asin: Amazon ASIN
+            proxy_type: Optional proxy type (unused)
 
         Returns:
             RawPriceData with price information

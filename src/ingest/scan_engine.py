@@ -48,6 +48,7 @@ class ScanResult:
     store: str
     products_found: int
     deals_found: int
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Store FetchOutcome and other metadata
     products: List[DiscoveredProduct] = field(default_factory=list)
     deals: List[DetectedDeal] = field(default_factory=list)
     error: Optional[str] = None
@@ -681,32 +682,39 @@ class ScanEngine:
             )
         
         def _update_category_from_result(cat: StoreCategory, scan_result: ScanResult, scan_time: datetime):
-            """Update category model from scan result."""
+            """Update category model from scan result with outcome-based handling."""
             cat.last_scanned = scan_time
             cat.products_found = scan_result.products_found
             cat.deals_found = scan_result.deals_found
+            
+            # Check for outcome in metadata (from FetchResult)
+            outcome = scan_result.metadata.get("outcome") if hasattr(scan_result, 'metadata') and scan_result.metadata else None
             
             if scan_result.error:
                 cat.last_error = scan_result.error
                 cat.last_error_at = scan_time
                 
-                # Auto-disable on 404 errors
-                if settings.category_disable_on_404 and _is_404_error(scan_result.error):
+                # Handle NOT_FOUND (404) - auto-disable
+                if outcome == "not_found" or (settings.category_disable_on_404 and _is_404_error(scan_result.error)):
                     logger.warning(
-                        "Auto-disabling category %s (%s) due to 404/410 error: %s",
+                        "Auto-disabling category %s (%s) due to 404/NOT_FOUND: %s",
                         cat.category_name,
                         cat.store,
                         scan_result.error
                     )
                     cat.enabled = False
+                    cat.broken_url = True
+                    cat.cooldown_until = None  # Clear cooldown since we're disabling
                 
-                # Auto-disable after N consecutive blocked occurrences
-                elif _is_blocked_error(scan_result.error):
+                # Handle BLOCKED (403, /blocked) - set cooldown
+                elif outcome == "blocked" or _is_blocked_error(scan_result.error):
+                    # Set cooldown for 403/BLOCKED
+                    cooldown_hours = getattr(settings, 'category_cooldown_hours_403', 24)
+                    cat.cooldown_until = scan_time + timedelta(hours=cooldown_hours)
+                    
                     # Track consecutive blocked occurrences
-                    # Use a simple approach: check if last_error was also blocked
                     consecutive_blocked = 1
                     if cat.last_error and _is_blocked_error(cat.last_error):
-                        # Check if last error was recent (within 24 hours)
                         if cat.last_error_at:
                             hours_since_last = (scan_time - cat.last_error_at).total_seconds() / 3600
                             if hours_since_last < 24:
@@ -722,9 +730,39 @@ class ScanEngine:
                             scan_result.error
                         )
                         cat.enabled = False
+                        cat.cooldown_until = None
+                
+                # Handle TIMEOUT - set short cooldown
+                elif outcome == "timeout":
+                    cooldown_hours = getattr(settings, 'category_cooldown_hours_timeout', 1)
+                    cat.cooldown_until = scan_time + timedelta(hours=cooldown_hours)
+                
+                # Handle RETRYABLE_NETWORK - set short cooldown
+                elif outcome == "retryable_network":
+                    cooldown_hours = getattr(settings, 'category_cooldown_hours_timeout', 1)
+                    cat.cooldown_until = scan_time + timedelta(hours=cooldown_hours)
+                
+                # Handle PARSING_EMPTY - log but don't disable (needs parser update)
+                elif outcome == "parsing_empty":
+                    logger.warning(
+                        "Category %s (%s) returned empty parse - may need parser update: %s",
+                        cat.category_name,
+                        cat.store,
+                        scan_result.error
+                    )
+                    # Don't set cooldown - allow retry
+                
+                # Handle other errors with cooldown if configured
+                else:
+                    cooldown_seconds = _get_error_cooldown_seconds(scan_result.error)
+                    if cooldown_seconds:
+                        cat.cooldown_until = scan_time + timedelta(seconds=cooldown_seconds)
             else:
+                # Success - clear error and cooldown
                 cat.last_error = None
                 cat.last_error_at = None
+                cat.cooldown_until = None
+                cat.broken_url = False
         
         async def batch_update_category_stats():
             """Batch update category stats to reduce database overhead."""

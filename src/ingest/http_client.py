@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Set
 
 import httpx
 
@@ -35,14 +35,34 @@ class SitePolicy:
     treat_404_as_permanent: bool = True
     treat_401_as_blocked: bool = True
     
+    # New fields for escalation and session management
+    requires_browser_on: Optional[set] = None  # Set of FetchOutcome values that trigger browser escalation
+    preferred_proxy_type: str = "any"  # "any" | "datacenter" | "residential"
+    sticky_sessions: bool = False  # Enable persistent contexts/cookies
+    timeout_profile: str = "normal"  # "fast" | "normal" | "slow"
+    blocked_url_patterns: Optional[list[str]] = None  # Patterns like ['/blocked', '/captcha']
+    treat_206_as_suspect: bool = False  # Treat HTTP 206 as suspicious
+    
     def __post_init__(self):
         """Set default timeout if not provided."""
         if self.timeout is None:
-            object.__setattr__(
-                self,
-                'timeout',
-                httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
-            )
+            # Apply timeout profile
+            if self.timeout_profile == "fast":
+                timeout_config = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+            elif self.timeout_profile == "slow":
+                timeout_config = httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=15.0)
+            else:  # normal
+                timeout_config = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+            
+            object.__setattr__(self, 'timeout', timeout_config)
+        
+        # Initialize requires_browser_on as empty set if None
+        if self.requires_browser_on is None:
+            object.__setattr__(self, 'requires_browser_on', set())
+        
+        # Initialize blocked_url_patterns as empty list if None
+        if self.blocked_url_patterns is None:
+            object.__setattr__(self, 'blocked_url_patterns', [])
 
 
 class BlockedError(RuntimeError):
@@ -258,24 +278,31 @@ POLICIES: dict[str, SitePolicy] = {
         max_attempts=4,
         timeout=httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=10.0),
         max_concurrency_per_host=1,  # Reduced to prevent disconnects
+        timeout_profile="slow",  # BestBuy is slow
     ),
     "costco": SitePolicy(
         name="costco",
         max_attempts=1,  # Blocked site, don't waste retries
         treat_403_as_blocked=True,
         treat_401_as_blocked=True,
+        preferred_proxy_type="residential",  # Costco requires residential proxies
+        sticky_sessions=True,
     ),
     "macys": SitePolicy(
         name="macys",
         max_attempts=1,  # Blocked site, don't waste retries
         treat_403_as_blocked=True,
         treat_401_as_blocked=True,
+        preferred_proxy_type="residential",  # Macy's requires residential proxies
+        sticky_sessions=True,
     ),
     "lowes": SitePolicy(
         name="lowes",
         max_attempts=1,  # Blocked site, don't waste retries
         treat_403_as_blocked=True,
         treat_401_as_blocked=True,
+        preferred_proxy_type="residential",  # Lowe's requires residential proxies
+        sticky_sessions=True,
     ),
     "walmart": SitePolicy(
         name="walmart",
@@ -290,6 +317,14 @@ POLICIES: dict[str, SitePolicy] = {
         timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0),
     ),
 }
+
+# Add homedepot policy if not present
+if "homedepot" not in POLICIES:
+    POLICIES["homedepot"] = SitePolicy(
+        name="homedepot",
+        max_attempts=3,
+        treat_206_as_suspect=True,  # Home Depot sometimes returns 206
+    )
 
 
 def get_policy_for_store(store: str) -> SitePolicy:

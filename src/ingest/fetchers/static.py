@@ -175,12 +175,13 @@ class StaticHTMLFetcher(BaseFetcher):
             await self._default_client.aclose()
             self._default_client = None
 
-    async def fetch(self, identifier: str) -> RawPriceData:
+    async def fetch(self, identifier: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """
         Fetch price from static HTML page with retry and proxy rotation.
 
         Args:
             identifier: Product SKU/ID
+            proxy_type: Optional proxy type (datacenter/residential/isp)
 
         Returns:
             RawPriceData with price information
@@ -192,8 +193,8 @@ class StaticHTMLFetcher(BaseFetcher):
         for attempt in range(max_retries):
             try:
                 # Get a proxy for this attempt if enabled
-                if self.use_proxy and proxy_rotator.has_proxies():
-                    current_proxy = await proxy_rotator.get_next_proxy()
+                if self.use_proxy and proxy_rotator.has_proxies(proxy_type=proxy_type):
+                    current_proxy = await proxy_rotator.get_next_proxy(proxy_type=proxy_type)
                     if current_proxy:
                         logger.debug(
                             f"Using proxy {current_proxy.host}:{current_proxy.port} "

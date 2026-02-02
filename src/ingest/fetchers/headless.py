@@ -19,6 +19,7 @@ from src.ingest.proxy_manager import proxy_rotator, ProxyInfo
 from src.ingest.stealth_browser import stealth_browser
 from src.ingest.user_agent_pool import user_agent_pool
 from src.ingest.fingerprint_randomizer import fingerprint_randomizer
+from src.ingest.session_store import session_store
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +136,10 @@ class HeadlessBrowserFetcher(BaseFetcher):
 
         self._playwright = None
         self._browser: Optional[Browser] = None
-        self._contexts: dict[int, BrowserContext] = {}  # proxy_id -> context
+        self._contexts: dict[str, BrowserContext] = {}  # session_key -> context
         self._default_context: Optional[BrowserContext] = None
         self._init_lock = asyncio.Lock()
+        self._max_contexts = getattr(settings, 'max_persistent_contexts', 10)
 
     @staticmethod
     def _parse_selectors(selector_input: Union[str, List[str], None]) -> List[str]:
@@ -165,12 +167,19 @@ class HeadlessBrowserFetcher(BaseFetcher):
         
         return selectors
 
-    async def _ensure_browser(self, proxy: Optional[ProxyInfo] = None) -> BrowserContext:
+    async def _ensure_browser(
+        self,
+        proxy: Optional[ProxyInfo] = None,
+        session_key: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> BrowserContext:
         """
-        Ensure browser and context are initialized.
+        Ensure browser and context are initialized with persistent session.
         
         Args:
             proxy: Optional proxy to use for this context
+            session_key: Optional session key for persistent context
+            user_agent: Optional user agent to use (if not provided, gets random from pool)
         """
         async with self._init_lock:
             if self._playwright is None:
@@ -186,46 +195,60 @@ class HeadlessBrowserFetcher(BaseFetcher):
                 "--disable-extensions",
             ]
 
-            # Get user agent from pool
-            user_agent = user_agent_pool.get_random()
-            
-            # Get fingerprint for context
-            fingerprint = fingerprint_randomizer.get_random_fingerprint()
+            # Get user agent from pool if not provided
+            if user_agent is None:
+                user_agent = user_agent_pool.get_random()
 
-            # If using proxy, create/reuse context with proxy
-            if proxy:
-                if proxy.id not in self._contexts:
-                    logger.info(f"Creating browser context with proxy {proxy.host}:{proxy.port}")
+            # Generate session key if not provided
+            if proxy and not session_key:
+                session_key = session_store.get_session_key(
+                    store=self.store_name,
+                    proxy_id=proxy.id,
+                    user_agent=user_agent,
+                )
+
+            # If using proxy, create/reuse persistent context with proxy
+            if proxy and session_key:
+                if session_key not in self._contexts:
+                    # Evict oldest context if at limit
+                    if len(self._contexts) >= self._max_contexts:
+                        await self._evict_oldest_context()
                     
-                    if self._browser is None:
-                        self._browser = await self._playwright.chromium.launch(
-                            headless=True,
-                            args=stealth_args,
-                        )
+                    logger.info(
+                        f"Creating persistent browser context with proxy {proxy.host}:{proxy.port} "
+                        f"(session_key: {session_key[:16]}...)"
+                    )
+                    
+                    # Get profile path for persistent context
+                    profile_path = session_store.get_profile_path(self.store_name, session_key)
+                    
+                    # Load storage state if available
+                    storage_state = session_store.load_storage_state(self.store_name, session_key)
                     
                     # Use stealth context options
                     context_options = stealth_browser.get_stealth_context_options("chromium")
                     context_options["proxy"] = proxy.playwright_config
                     context_options["user_agent"] = user_agent
                     
-                    self._contexts[proxy.id] = await self._browser.new_context(**context_options)
+                    # Use persistent context with profile directory
+                    self._contexts[session_key] = await self._playwright.chromium.launch_persistent_context(
+                        str(profile_path),
+                        headless=True,
+                        args=stealth_args,
+                        storage_state=storage_state,
+                        **context_options,
+                    )
                 
-                return self._contexts[proxy.id]
+                return self._contexts[session_key]
             
-            # Default context without proxy
+            # Default context without proxy (legacy support)
             if self._default_context is None:
                 # Get persistent context path for session reuse
+                from src.ingest.session_manager import session_manager
                 profile_path = session_manager.get_playwright_profile_path(
                     self.store_name
                 )
 
-                if self._browser is None:
-                    self._browser = await self._playwright.chromium.launch(
-                        headless=True,
-                        args=stealth_args,
-                    )
-
-                # Use persistent context if available
                 if profile_path and profile_path.exists():
                     context_options = stealth_browser.get_stealth_context_options("chromium")
                     context_options["user_agent"] = user_agent
@@ -240,9 +263,35 @@ class HeadlessBrowserFetcher(BaseFetcher):
                     context_options = stealth_browser.get_stealth_context_options("chromium")
                     context_options["user_agent"] = user_agent
                     
+                    if self._browser is None:
+                        self._browser = await self._playwright.chromium.launch(
+                            headless=True,
+                            args=stealth_args,
+                        )
+                    
                     self._default_context = await self._browser.new_context(**context_options)
 
             return self._default_context
+    
+    async def _evict_oldest_context(self):
+        """Evict the oldest context from the pool (LRU)."""
+        if not self._contexts:
+            return
+        
+        # For simplicity, evict first context (could implement proper LRU with timestamps)
+        oldest_key = next(iter(self._contexts))
+        context = self._contexts.pop(oldest_key)
+        
+        try:
+            # Save storage state before closing
+            await context.storage_state(path=session_store._get_storage_state_path(
+                self.store_name,
+                oldest_key
+            ))
+            await context.close()
+            logger.debug(f"Evicted context {oldest_key[:16]}...")
+        except Exception as e:
+            logger.warning(f"Error evicting context {oldest_key[:16]}...: {e}")
 
     async def close(self):
         """Close browser and cleanup."""
@@ -390,12 +439,13 @@ class HeadlessBrowserFetcher(BaseFetcher):
             logger.debug(f"Fallback price extraction failed: {e}")
             return None
 
-    async def fetch(self, identifier: str) -> RawPriceData:
+    async def fetch(self, identifier: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """
         Fetch price using headless browser with retry logic and proxy rotation.
 
         Args:
             identifier: Product SKU/ID
+            proxy_type: Optional proxy type (datacenter/residential/isp)
 
         Returns:
             RawPriceData with price information
@@ -407,8 +457,8 @@ class HeadlessBrowserFetcher(BaseFetcher):
         for attempt in range(max_retries):
             try:
                 # Get a proxy for this attempt if enabled
-                if self.use_proxy and proxy_rotator.has_proxies():
-                    current_proxy = await proxy_rotator.get_next_proxy()
+                if self.use_proxy and proxy_rotator.has_proxies(proxy_type=proxy_type):
+                    current_proxy = await proxy_rotator.get_next_proxy(proxy_type=proxy_type)
                     if current_proxy:
                         logger.debug(
                             f"Using proxy {current_proxy.host}:{current_proxy.port} "
@@ -457,7 +507,8 @@ class HeadlessBrowserFetcher(BaseFetcher):
     async def _do_fetch(
         self, 
         identifier: str, 
-        proxy: Optional[ProxyInfo] = None
+        proxy: Optional[ProxyInfo] = None,
+        session_key: Optional[str] = None,
     ) -> RawPriceData:
         """
         Internal fetch implementation with multi-selector support.
@@ -465,11 +516,22 @@ class HeadlessBrowserFetcher(BaseFetcher):
         Args:
             identifier: Product SKU/ID
             proxy: Optional proxy to use
+            session_key: Optional session key for persistent context
 
         Returns:
             RawPriceData with price information
         """
-        context = await self._ensure_browser(proxy)
+        # Generate session key if not provided
+        user_agent = None
+        if proxy and not session_key:
+            user_agent = user_agent_pool.get_random()
+            session_key = session_store.get_session_key(
+                store=self.store_name,
+                proxy_id=proxy.id,
+                user_agent=user_agent,
+            )
+        
+        context = await self._ensure_browser(proxy, session_key, user_agent)
         url = self._build_url(identifier)
         domain = urlparse(url).netloc
 

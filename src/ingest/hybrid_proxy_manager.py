@@ -105,6 +105,7 @@ class HybridProxyManager:
                     port=config.port,
                     username=config.username,
                     password=config.password,
+                    proxy_type=config.proxy_type or "datacenter",
                 )
                 
                 # Add to appropriate pool

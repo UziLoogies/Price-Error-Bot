@@ -75,12 +75,13 @@ class JSONEndpointFetcher(BaseFetcher):
             await self._http_client.aclose()
             self._http_client = None
 
-    async def fetch(self, identifier: str) -> RawPriceData:
+    async def fetch(self, identifier: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """
         Fetch price from JSON endpoint.
 
         Args:
             identifier: Product SKU/ID
+            proxy_type: Optional proxy type (unused)
 
         Returns:
             RawPriceData with price information

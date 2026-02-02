@@ -18,6 +18,7 @@ from src.db.session import engine
 from src.db.models import Base
 from src.worker.scheduler import setup_scheduler
 from src.worker.tasks import task_runner
+from src.worker.scan_watchdog import scan_watchdog_check
 from src.api.routes import alerts, products, rules, stores, webhooks, dashboard, proxies, categories, scans, exclusions, notifications
 from src import metrics
 from src.ingest.proxy_manager import proxy_rotator
@@ -52,6 +53,12 @@ async def lifespan(app: FastAPI):
 
     # Initialize task runner
     await task_runner.initialize()
+
+    # Startup lock cleanup (stale heartbeat recovery)
+    await scan_watchdog_check(
+        heartbeat_stale_seconds=600,
+        reason_prefix="Startup cleanup",
+    )
 
     # Start scheduler
     scheduler = setup_scheduler()

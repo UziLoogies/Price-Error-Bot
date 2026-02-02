@@ -14,7 +14,8 @@ from typing import Optional, List
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models import Product, PriceHistory
+from src.config import settings
+from src.db.models import Product, PriceHistory, BaselineHistory
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,11 @@ class ProductBaseline:
     last_calculated: datetime
     observation_count: int
     last_price: Optional[Decimal]       # Most recent observed price
+    baseline_30d_median: Optional[Decimal] = None
+    baseline_90d_median: Optional[Decimal] = None
+    baseline_msrp: Optional[Decimal] = None
+    baseline_source: Optional[str] = None
+    data_freshness_days: Optional[int] = None
     
     def get_discount_from_baseline(self, current_price: Decimal) -> float:
         """Calculate discount percentage from baseline."""
@@ -140,6 +146,7 @@ class BaselineCalculator:
         db: AsyncSession,
         product_id: int,
         days: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> List[PriceHistory]:
         """
         Get price history for a product.
@@ -148,6 +155,7 @@ class BaselineCalculator:
             db: Database session
             product_id: Product ID
             days: Limit to last N days (None = all history)
+            limit: Limit number of records (most recent first)
             
         Returns:
             List of PriceHistory records ordered by date
@@ -161,6 +169,9 @@ class BaselineCalculator:
         if days:
             cutoff = datetime.utcnow() - timedelta(days=days)
             query = query.where(PriceHistory.fetched_at >= cutoff)
+
+        if limit:
+            query = query.limit(limit)
         
         result = await db.execute(query)
         return list(result.scalars().all())
@@ -233,9 +244,14 @@ class BaselineCalculator:
         if not all_history:
             return None
         
-        # Calculate rolling averages
+        # Load product for MSRP and canonical identifiers
+        product = await db.get(Product, product_id)
+        baseline_msrp = product.msrp if product else None
+
+        # Calculate rolling averages and medians
         history_7d = await self.get_price_history(db, product_id, self.window_7d)
         history_30d = await self.get_price_history(db, product_id, self.window_30d)
+        history_90d = await self.get_price_history(db, product_id, 90)
         
         avg_7d = None
         avg_30d = None
@@ -250,6 +266,19 @@ class BaselineCalculator:
             if prices_30d:
                 avg_30d = Decimal(str(round(statistics.mean(prices_30d), 2)))
         
+        # Calculate median baselines
+        median_30d = None
+        if history_30d:
+            prices_30d = [float(h.price) for h in history_30d if h.price > 0]
+            if prices_30d:
+                median_30d = Decimal(str(round(statistics.median(prices_30d), 2)))
+
+        median_90d = None
+        if history_90d:
+            prices_90d = [float(h.price) for h in history_90d if h.price > 0]
+            if prices_90d:
+                median_90d = Decimal(str(round(statistics.median(prices_90d), 2)))
+
         # Calculate overall statistics
         all_prices = [float(h.price) for h in all_history if h.price > 0]
         
@@ -265,15 +294,34 @@ class BaselineCalculator:
         cv = std_dev / mean if mean > 0 else 0.0
         stability = max(0.0, min(1.0, 1.0 - cv))
         
-        # Determine current baseline (prefer 7d avg if stable, else 30d, else median)
-        if avg_7d and stability > 0.7:
-            current_baseline = avg_7d
-        elif avg_30d:
-            current_baseline = avg_30d
-        else:
+        # Determine current baseline based on priority order
+        baseline_candidates = {
+            "90d_median": median_90d,
+            "30d_median": median_30d,
+            "msrp": baseline_msrp,
+            "launch_price": baseline_msrp,
+            "avg_30d": avg_30d,
+            "avg_7d": avg_7d if avg_7d and stability > 0.7 else None,
+        }
+
+        current_baseline = None
+        baseline_source = None
+        for key in settings.baseline_priority_order:
+            value = baseline_candidates.get(key)
+            if value and value > 0:
+                current_baseline = value
+                baseline_source = key
+                break
+
+        if current_baseline is None:
             current_baseline = Decimal(str(round(statistics.median(all_prices), 2)))
-        
-        return ProductBaseline(
+            baseline_source = "median_all"
+
+        data_freshness_days = None
+        if all_history:
+            data_freshness_days = (datetime.utcnow() - all_history[0].fetched_at).days
+
+        baseline = ProductBaseline(
             product_id=product_id,
             avg_price_7d=avg_7d,
             avg_price_30d=avg_30d,
@@ -284,7 +332,50 @@ class BaselineCalculator:
             last_calculated=datetime.utcnow(),
             observation_count=len(all_history),
             last_price=all_history[0].price if all_history else None,
+            baseline_30d_median=median_30d,
+            baseline_90d_median=median_90d,
+            baseline_msrp=baseline_msrp,
+            baseline_source=baseline_source,
+            data_freshness_days=data_freshness_days,
         )
+
+        # Record baseline history with provenance (throttled)
+        if product:
+            await self._record_baseline_history(db, product, baseline)
+
+        return baseline
+
+    async def _record_baseline_history(
+        self,
+        db: AsyncSession,
+        product: Product,
+        baseline: ProductBaseline,
+    ) -> None:
+        """Store baseline calculation in history with basic throttling."""
+        canonical_id = f"{product.store}:{product.sku}"
+        query = (
+            select(BaselineHistory)
+            .where(BaselineHistory.product_id == canonical_id)
+            .order_by(BaselineHistory.calculated_at.desc())
+            .limit(1)
+        )
+        result = await db.execute(query)
+        last = result.scalar_one_or_none()
+
+        if last and (datetime.utcnow() - last.calculated_at).total_seconds() < 6 * 3600:
+            return
+
+        history = BaselineHistory(
+            product_id=canonical_id,
+            baseline_30d_median=baseline.baseline_30d_median,
+            baseline_90d_median=baseline.baseline_90d_median,
+            baseline_msrp=baseline.baseline_msrp,
+            baseline_source=baseline.baseline_source,
+            calculated_at=baseline.last_calculated,
+            data_freshness_days=baseline.data_freshness_days,
+        )
+        db.add(history)
+        await db.commit()
     
     async def is_anomaly(
         self,

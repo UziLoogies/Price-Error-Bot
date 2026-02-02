@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from src.ai.product_matcher import product_matcher
 from src.config import settings
@@ -293,6 +293,15 @@ class DetectedDeal:
     anomaly_methods: Optional[List[str]] = None  # Methods that flagged anomaly
     z_score: Optional[float] = None  # Z-score if calculated
     percentile: Optional[float] = None  # Price percentile in distribution
+    
+    # Baseline provenance
+    baseline_price: Optional[Decimal] = None
+    baseline_source: Optional[str] = None
+    baseline_30d_median: Optional[Decimal] = None
+    baseline_90d_median: Optional[Decimal] = None
+    
+    # Verification evidence
+    verification_details: Optional[Dict[str, Any]] = None
     
     @property
     def is_significant(self) -> bool:

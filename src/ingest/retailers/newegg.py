@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from typing import Optional
 
 from src.ingest.base import RawPriceData
 from src.ingest.fetchers.static import StaticHTMLFetcher
@@ -23,7 +24,7 @@ class NeweggFetcher(StaticHTMLFetcher):
             title_selector="h1.product-title",
         )
 
-    async def fetch(self, identifier: str) -> RawPriceData:
+    async def fetch(self, identifier: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """Fetch with embedded JSON extraction as fallback."""
         from decimal import Decimal
         from urllib.parse import urlparse
@@ -44,7 +45,7 @@ class NeweggFetcher(StaticHTMLFetcher):
 
         try:
             # Try static HTML first
-            return await super().fetch(identifier)
+            return await super().fetch(identifier, proxy_type=proxy_type)
         except Exception as e:
             logger.debug(f"Static HTML failed, trying embedded JSON: {e}")
 

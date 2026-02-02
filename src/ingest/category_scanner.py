@@ -20,6 +20,7 @@ from src.ingest.rate_limiter import rate_limiter
 from src.ingest.content_analyzer import content_analyzer
 from src.ingest.http_cache import http_cache
 from src.ingest.store_health import store_health
+from src.ingest.session_store import session_store
 from src.ingest.http_client import (
     fetch_with_policy,
     get_policy_for_store,
@@ -1731,6 +1732,25 @@ class CategoryScanner:
             if client_key in self._http_clients:
                 return self._http_clients[client_key]
             
+            # Generate session key for cookie persistence
+            session_key = None
+            if proxy:
+                session_key = session_store.get_session_key(
+                    store=domain,
+                    proxy_id=proxy.id,
+                    user_agent=user_agent,
+                )
+            
+            # Load cookies from session store if available
+            cookies = None
+            if session_key:
+                cookie_list = session_store.load_cookies(domain, session_key)
+                if cookie_list:
+                    # Convert to httpx cookies format
+                    cookies = {}
+                    for cookie_dict in cookie_list:
+                        cookies[cookie_dict["name"]] = cookie_dict["value"]
+            
             # More browser-like headers
             headers = {
                 "User-Agent": user_agent,
@@ -1746,6 +1766,11 @@ class CategoryScanner:
                 "Cache-Control": "max-age=0",
             }
             
+            # Add cookies to headers if available
+            if cookies:
+                cookie_header = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+                headers["Cookie"] = cookie_header
+            
             # Create client with optimized connection pooling
             limits = httpx.Limits(
                 max_keepalive_connections=settings.connection_keepalive,
@@ -1759,6 +1784,7 @@ class CategoryScanner:
                     headers=headers,
                     proxy=proxy.url,
                     limits=limits,
+                    cookies=cookies if cookies else None,
                 )
             else:
                 client = httpx.AsyncClient(
@@ -1766,6 +1792,7 @@ class CategoryScanner:
                     follow_redirects=True,
                     headers=headers,
                     limits=limits,
+                    cookies=cookies if cookies else None,
                 )
             
             self._http_clients[client_key] = client

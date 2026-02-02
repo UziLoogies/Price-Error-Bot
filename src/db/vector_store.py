@@ -174,11 +174,7 @@ class VectorStore:
         
         result = await db.execute(
             query,
-            {
-                "embedding": embedding_str,
-                "threshold": threshold,
-                "limit": limit,
-            }
+            query_params
         )
         
         rows = result.fetchall()

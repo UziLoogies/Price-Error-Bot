@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.ai.llm_anomaly_reviewer import llm_anomaly_reviewer
 from src.config import settings
 from src.db.models import Product, PriceHistory, Rule as RuleModel
+from src.detect.baseline import baseline_calculator
+from src.ingest.retailers.strategies import get_strategy_for_store
 from src.detect.anomaly_detector import anomaly_detector
 from src.detect.rules import Rule, RuleType
 from src.normalize.processor import NormalizedPrice
@@ -27,11 +29,25 @@ class DetectionResult:
         rule: Rule | None = None,
         reason: str = "",
         confidence: float = 1.0,
+        baseline_price: Optional[Decimal] = None,
+        baseline_source: Optional[str] = None,
+        baseline_30d_median: Optional[Decimal] = None,
+        baseline_90d_median: Optional[Decimal] = None,
+        baseline_msrp: Optional[Decimal] = None,
+        discount_percent: Optional[float] = None,
+        evidence_requirements: Optional[list[str]] = None,
     ):
         self.triggered = triggered
         self.rule = rule
         self.reason = reason
         self.confidence = confidence
+        self.baseline_price = baseline_price
+        self.baseline_source = baseline_source
+        self.baseline_30d_median = baseline_30d_median
+        self.baseline_90d_median = baseline_90d_median
+        self.baseline_msrp = baseline_msrp
+        self.discount_percent = discount_percent
+        self.evidence_requirements = evidence_requirements or []
 
 
 class DetectionEngine:
@@ -44,6 +60,7 @@ class DetectionEngine:
         self,
         product: Product,
         normalized_price: NormalizedPrice,
+        context: Optional[dict] = None,
     ) -> DetectionResult:
         """
         Detect if a price is an error using configured rules.
@@ -77,8 +94,13 @@ class DetectionEngine:
                 reason="No rules configured",
             )
 
-        # Get baseline price (average of last 30 days)
-        baseline_price = await self._get_baseline_price(product.id)
+        # Get multi-source baseline
+        baseline = await baseline_calculator.calculate_baseline(self.db, product.id)
+        baseline_price = baseline.current_baseline if baseline else product.baseline_price
+        baseline_source = baseline.baseline_source if baseline else None
+        baseline_30d = baseline.baseline_30d_median if baseline else None
+        baseline_90d = baseline.baseline_90d_median if baseline else None
+        baseline_msrp = baseline.baseline_msrp if baseline else product.msrp
 
         # Get previous price
         previous_price = await self._get_previous_price(product.id)
@@ -112,8 +134,28 @@ class DetectionEngine:
                         )
                         continue
 
+                # Apply retailer-specific strategy checks
+                strategy = get_strategy_for_store(product.store)
+                decision = strategy.validate(
+                    product=product,
+                    normalized_price=normalized_price,
+                    baseline=baseline,
+                    context=context or {},
+                )
+                if not decision.allowed:
+                    logger.info(
+                        "Strategy rejected detection for %s: %s",
+                        product.sku,
+                        decision.reason,
+                    )
+                    continue
+                if decision.reason:
+                    reason = f"{reason} | {decision.reason}"
+
                 # Hybrid approach: Fast statistical detection + ML + LLM review
                 confidence = normalized_price.confidence * 0.9  # Slight reduction
+                if decision.confidence_adjustment:
+                    confidence = max(0.0, min(1.0, confidence + decision.confidence_adjustment))
                 
                 # Run ML anomaly detection if enabled
                 ml_result = None
@@ -158,6 +200,17 @@ class DetectionEngine:
                         logger.warning(f"LLM review failed: {e}")
                         # Continue without LLM review if it fails
 
+                # Calculate discount percent from baseline if available
+                discount_percent = None
+                if baseline_price and baseline_price > 0:
+                    discount_percent = float(
+                        (1 - normalized_price.current_price / baseline_price) * 100
+                    )
+                elif normalized_price.msrp and normalized_price.msrp > 0:
+                    discount_percent = float(
+                        (1 - normalized_price.current_price / normalized_price.msrp) * 100
+                    )
+
                 logger.info(
                     f"Price error detected for {product.sku}: {reason} "
                     f"(Rule: {rule.name or rule.rule_type.value}, "
@@ -169,31 +222,31 @@ class DetectionEngine:
                     rule=rule,
                     reason=reason,
                     confidence=confidence,
+                    baseline_price=baseline_price,
+                    baseline_source=baseline_source,
+                    baseline_30d_median=baseline_30d,
+                    baseline_90d_median=baseline_90d,
+                    baseline_msrp=baseline_msrp,
+                    discount_percent=discount_percent,
+                    evidence_requirements=decision.evidence_requirements,
                 )
 
         return DetectionResult(
             triggered=False,
             reason="No rules triggered",
             confidence=normalized_price.confidence,
+            baseline_price=baseline_price,
+            baseline_source=baseline_source,
+            baseline_30d_median=baseline_30d,
+            baseline_90d_median=baseline_90d,
+            baseline_msrp=baseline_msrp,
         )
 
     async def _get_baseline_price(self, product_id: int) -> Optional[Decimal]:
-        """Get baseline price (average of last 30 days)."""
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-
-        query = select(
-            func.avg(PriceHistory.price)
-        ).where(
-            PriceHistory.product_id == product_id,
-            PriceHistory.fetched_at >= thirty_days_ago,
-            PriceHistory.confidence >= 0.7,  # Only high-confidence prices
-        )
-
-        result = await self.db.execute(query)
-        avg_price = result.scalar()
-
-        if avg_price:
-            return Decimal(str(avg_price))
+        """Get baseline price using multi-source baseline calculator."""
+        baseline = await baseline_calculator.calculate_baseline(self.db, product_id)
+        if baseline:
+            return baseline.current_baseline
         return None
 
     async def _get_previous_price(self, product_id: int) -> Optional[Decimal]:

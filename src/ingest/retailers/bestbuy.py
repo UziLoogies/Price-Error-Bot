@@ -3,6 +3,8 @@
 import logging
 from decimal import Decimal
 
+from typing import Optional
+
 from src.ingest.base import RawPriceData
 from src.ingest.fetchers.static import StaticHTMLFetcher
 from src.ingest.rate_limiter import rate_limiter
@@ -22,10 +24,10 @@ class BestBuyFetcher(StaticHTMLFetcher):
             title_selector="h1.heading-5",
         )
 
-    async def fetch(self, identifier: str) -> RawPriceData:
+    async def fetch(self, identifier: str, proxy_type: Optional[str] = None) -> RawPriceData:
         """Fetch with JSON fallback if HTML parsing fails."""
         try:
-            return await super().fetch(identifier)
+            return await super().fetch(identifier, proxy_type=proxy_type)
         except Exception as e:
             logger.debug(f"Static HTML fetch failed, trying JSON fallback: {e}")
             # Try JSON endpoint fallback

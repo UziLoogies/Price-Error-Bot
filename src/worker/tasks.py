@@ -3,11 +3,14 @@
 import asyncio
 import logging
 from decimal import Decimal
+from uuid import uuid4
+from contextlib import suppress
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
-from src.db.models import Alert, PriceHistory, Product, Webhook
+from src.db.models import Alert, PriceHistory, Product, Webhook, ScanJob
 from src.db.session import AsyncSessionLocal
 from src.detect.engine import DetectionEngine
 from src.detect.baseline import baseline_calculator
@@ -17,6 +20,9 @@ from src.notify.discord import DiscordWebhook
 from src.notify.webhook_manager import webhook_manager
 from src.notify.cross_source_dedupe import cross_source_deduper
 from src.api.routes.dashboard import add_scan_entry
+from src.worker.scan_lock import scan_lock_manager, refresh_lock_heartbeat
+from src.config import settings
+from src import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,6 @@ class TaskRunner:
 
     def __init__(self):
         self.dedupe_manager: DedupeManager | None = None
-        self._scan_lock = asyncio.Lock()
 
     async def initialize(self):
         """Initialize task runner."""
@@ -46,6 +51,7 @@ class TaskRunner:
         """Clean up resources."""
         if self.dedupe_manager:
             await self.dedupe_manager.close()
+        await scan_lock_manager.close()
 
     async def recalculate_baselines(self):
         """Recalculate baseline prices for discovered products."""
@@ -75,52 +81,323 @@ class TaskRunner:
 
     async def scan_store_categories(self):
         """
-        Scan enabled store categories for deals.
+        Scan enabled store categories for deals (scheduled trigger).
         
-        This is the main scanning method that:
-        1. Scans category pages from configured stores
-        2. Discovers products and their prices
-        3. Detects deals based on discounts
-        4. Sends alerts for significant deals
+        This method is called by APScheduler and delegates to scan_entrypoint.
         """
-        from src.ingest.scan_engine import scan_engine
+        await self.scan_entrypoint(trigger="scheduled")
 
-        logger.info("Starting category scan for deals")
+    async def scan_signal_sources(self):
+        """
+        Ingest third-party signals and process candidates (scheduled trigger).
+        """
+        scan_mode = getattr(settings, "scan_mode", "category").lower()
+        if scan_mode not in ("signal", "hybrid"):
+            logger.info("Signal scan skipped (scan_mode=%s)", scan_mode)
+            return
+        if not settings.third_party_enabled:
+            logger.info("Signal scan skipped (third_party_enabled=False)")
+            return
+
+        from datetime import datetime
+        from src.ingest.signal_scan_engine import signal_scan_engine
+
+        run_id = uuid4().hex
+        scan_job_id: Optional[int] = None
 
         try:
-            # Atomic try-acquire pattern to avoid race condition
-            try:
-                # Attempt non-blocking acquire
-                await asyncio.wait_for(self._scan_lock.acquire(), timeout=0)
-            except asyncio.TimeoutError:
-                # Lock is already held, scan is running
-                logger.info("Scan already running; skipping scheduled run")
-                return
-            
-            try:
-                # Use the scan engine for parallel scanning with filtering
-                progress = await scan_engine.run_scheduled_scan()
+            async with AsyncSessionLocal() as db:
+                scan_job = ScanJob(
+                    run_id=run_id,
+                    job_type="signal",
+                    trigger="scheduled",
+                    status="running",
+                    started_at=datetime.utcnow(),
+                )
+                db.add(scan_job)
+                await db.commit()
+                await db.refresh(scan_job)
+                scan_job_id = scan_job.id
 
+            summary = await signal_scan_engine.run_once()
+
+            async with AsyncSessionLocal() as db:
+                scan_job = await db.get(ScanJob, scan_job_id)
+                if scan_job:
+                    scan_job.status = "completed"
+                    scan_job.completed_at = datetime.utcnow()
+                    scan_job.total_items = summary.candidates_created
+                    scan_job.processed_items = summary.candidates_processed
+                    scan_job.success_count = summary.verified_deals
+                    scan_job.error_count = len(summary.errors)
+                    scan_job.products_found = summary.signals_ingested
+                    scan_job.deals_found = summary.verified_deals
+                    if summary.errors:
+                        scan_job.error_message = "\n".join(summary.errors[:5])
+                    await db.commit()
+
+            if summary.errors:
+                logger.warning(
+                    "Signal scan completed with %d errors: %s",
+                    len(summary.errors),
+                    "; ".join(summary.errors[:3]),
+                )
+            logger.info(
+                "Signal scan complete: %d signals, %d candidates, %d verified deals",
+                summary.signals_ingested,
+                summary.candidates_processed,
+                summary.verified_deals,
+            )
+        except Exception as exc:
+            logger.error("Signal scan failed: %s", exc, exc_info=True)
+            if scan_job_id:
+                async with AsyncSessionLocal() as db:
+                    scan_job = await db.get(ScanJob, scan_job_id)
+                    if scan_job:
+                        scan_job.status = "failed"
+                        scan_job.completed_at = datetime.utcnow()
+                        scan_job.error_message = str(exc)[:500]
+                        await db.commit()
+    
+    async def scan_entrypoint(self, trigger: str = "scheduled"):
+        """
+        Unified scan entrypoint for both scheduled and manual triggers.
+        
+        This function:
+        1. Acquires distributed Redis lock with TTL
+        2. Creates ScanJob record
+        3. Starts heartbeat task
+        4. Executes scan with timeout protection
+        5. Updates ScanJob with results
+        6. Releases lock in finally block
+        
+        Args:
+            trigger: Trigger type ("scheduled" | "manual")
+        """
+        from src.ingest.scan_engine import scan_engine
+        from datetime import datetime
+        
+        # Generate unique run ID
+        run_id = uuid4().hex
+        
+        scan_mode = getattr(settings, "scan_mode", "category").lower()
+        logger.info(
+            f"Starting scan (mode: {scan_mode}, trigger: {trigger}, run_id: {run_id[:16]}...)"
+        )
+        
+        # Acquire distributed lock
+        lock_token = await scan_lock_manager.acquire_lock(
+            run_id=run_id,
+            ttl_seconds=settings.scan_lock_ttl_seconds,
+        )
+        
+        if not lock_token:
+            lock_info = await scan_lock_manager.get_lock_info()
+            heartbeat_age = await scan_lock_manager.get_heartbeat_age()
+            metrics.update_scan_lock_heartbeat_age(heartbeat_age)
+            if trigger == "manual":
+                await scan_lock_manager.request_run_after_current()
+                metrics.record_scan_lock_skipped(trigger, "lock_held_queued")
+                logger.info(
+                    "Scan already running; queued manual run (lock_run_id: %s, ttl_s: %s, heartbeat_age_s: %s)",
+                    (lock_info.get("run_id")[:16] if lock_info and lock_info.get("run_id") else None),
+                    lock_info.get("ttl_seconds") if lock_info else None,
+                    f"{heartbeat_age:.0f}" if heartbeat_age is not None else None,
+                )
+            else:
+                metrics.record_scan_lock_skipped(trigger, "lock_held")
+                logger.info(
+                    "Scan already running; skipping %s run (lock_run_id: %s, ttl_s: %s, heartbeat_age_s: %s)",
+                    trigger,
+                    (lock_info.get("run_id")[:16] if lock_info and lock_info.get("run_id") else None),
+                    lock_info.get("ttl_seconds") if lock_info else None,
+                    f"{heartbeat_age:.0f}" if heartbeat_age is not None else None,
+                )
+            return
+        
+        metrics.record_scan_lock_acquired(trigger)
+        lock_info = await scan_lock_manager.get_lock_info()
+        heartbeat_age = await scan_lock_manager.get_heartbeat_age()
+        metrics.update_scan_lock_heartbeat_age(heartbeat_age)
+        logger.info(
+            "Scan lock acquired (run_id: %s, trigger: %s, ttl_s: %s, heartbeat_age_s: %s)",
+            run_id[:16],
+            trigger,
+            lock_info.get("ttl_seconds") if lock_info else None,
+            f"{heartbeat_age:.0f}" if heartbeat_age is not None else None,
+        )
+        
+        scan_job_id: Optional[int] = None
+        heartbeat_task: Optional[asyncio.Task] = None
+        redis_client = await scan_lock_manager._get_redis()
+        scan_completed_successfully = False
+        
+        try:
+            # Create ScanJob record
+            job_type = "category"
+            if scan_mode == "signal":
+                job_type = "signal"
+            elif scan_mode == "hybrid":
+                job_type = "hybrid"
+
+            async with AsyncSessionLocal() as db:
+                scan_job = ScanJob(
+                    run_id=run_id,
+                    job_type=job_type,
+                    trigger=trigger,
+                    status="running",
+                    started_at=datetime.utcnow(),
+                )
+                db.add(scan_job)
+                await db.commit()
+                await db.refresh(scan_job)
+                scan_job_id = scan_job.id
+                logger.info(f"Created ScanJob {scan_job_id} for run_id: {run_id[:16]}...")
+            
+            # Start heartbeat task
+            heartbeat_task = asyncio.create_task(
+                refresh_lock_heartbeat(
+                    redis_client=redis_client,
+                    run_id=run_id,
+                    token=lock_token,
+                    interval=settings.scan_lock_heartbeat_interval_seconds,
+                    ttl=settings.scan_lock_ttl_seconds,
+                )
+            )
+            
+            # Execute scan with timeout protection
+            try:
+                signal_summary = None
+                run_signal_scan = scan_mode in ("signal", "hybrid")
+                if scan_mode == "hybrid" and trigger == "scheduled":
+                    run_signal_scan = False
+
+                if run_signal_scan:
+                    from src.ingest.signal_scan_engine import signal_scan_engine
+
+                    signal_summary = await signal_scan_engine.run_once()
+                    if signal_summary.errors:
+                        logger.warning(
+                            "Signal scan errors: %s",
+                            "; ".join(signal_summary.errors[:3]),
+                        )
+                    logger.info(
+                        "Signal scan complete: %d signals, %d candidates, %d verified deals",
+                        signal_summary.signals_ingested,
+                        signal_summary.candidates_processed,
+                        signal_summary.verified_deals,
+                    )
+
+                    if scan_mode == "signal":
+                        # Update ScanJob for signal-only mode
+                        async with AsyncSessionLocal() as db:
+                            scan_job = await db.get(ScanJob, scan_job_id)
+                            if scan_job:
+                                scan_job.status = "completed"
+                                scan_job.completed_at = datetime.utcnow()
+                                scan_job.processed_items = signal_summary.candidates_processed
+                                scan_job.success_count = signal_summary.verified_deals
+                                scan_job.error_count = len(signal_summary.errors)
+                                scan_job.products_found = signal_summary.signals_ingested
+                                scan_job.deals_found = signal_summary.verified_deals
+                                if signal_summary.errors:
+                                    scan_job.error_message = "\n".join(signal_summary.errors[:5])
+                                await db.commit()
+                        scan_completed_successfully = True
+                        return
+
+                progress = await asyncio.wait_for(
+                    scan_engine.run_scheduled_scan(),
+                    timeout=settings.max_scan_duration_seconds,
+                )
+                
                 # Process discovered deals
                 for result in progress.results:
                     if result.deals:
                         for deal in result.deals:
                             await self._process_discovered_deal(deal)
-
+                
                 logger.info(
                     f"Category scan complete: {progress.total_products} products, "
                     f"{progress.total_deals} deals from {progress.completed_categories} categories"
                 )
-
+                
                 if progress.errors:
                     logger.warning(f"Scan had {len(progress.errors)} errors")
-            finally:
-                # Always release the lock
-                self._scan_lock.release()
+                
+                # Update ScanJob with success
+                async with AsyncSessionLocal() as db:
+                    scan_job = await db.get(ScanJob, scan_job_id)
+                    if scan_job:
+                        scan_job.status = "completed"
+                        scan_job.completed_at = datetime.utcnow()
+                        scan_job.processed_items = progress.completed_categories
+                        scan_job.success_count = progress.completed_categories - len(progress.errors)
+                        scan_job.error_count = len(progress.errors)
+                        scan_job.products_found = progress.total_products
+                        scan_job.deals_found = progress.total_deals
+                        if signal_summary:
+                            scan_job.products_found += signal_summary.signals_ingested
+                            scan_job.deals_found += signal_summary.verified_deals
+                        if progress.errors:
+                            scan_job.error_message = "\n".join(progress.errors[:5])  # Limit length
+                        await db.commit()
+                scan_completed_successfully = True
+                
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Scan timed out after {settings.max_scan_duration_seconds} seconds "
+                    f"(run_id: {run_id[:16]}...)"
+                )
+                
+                # Update ScanJob with timeout failure
+                async with AsyncSessionLocal() as db:
+                    scan_job = await db.get(ScanJob, scan_job_id)
+                    if scan_job:
+                        scan_job.status = "failed"
+                        scan_job.completed_at = datetime.utcnow()
+                        scan_job.error_message = f"Scan timed out after {settings.max_scan_duration_seconds} seconds"
+                        await db.commit()
+                
+                raise
+            
+            except Exception as e:
+                logger.error(f"Category scan failed: {e}", exc_info=True)
+                
+                # Update ScanJob with failure
+                async with AsyncSessionLocal() as db:
+                    scan_job = await db.get(ScanJob, scan_job_id)
+                    if scan_job:
+                        scan_job.status = "failed"
+                        scan_job.completed_at = datetime.utcnow()
+                        scan_job.error_message = str(e)[:500]  # Limit length
+                        await db.commit()
+                
+                raise
+        
+        finally:
+            # Cancel heartbeat
+            if heartbeat_task and not heartbeat_task.done():
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Always release lock
+            released = False
+            with suppress(Exception):
+                released = await scan_lock_manager.safe_unlock(run_id, token=lock_token)
+            if released:
+                logger.info(f"Released scan lock for run_id: {run_id[:16]}...")
+            else:
+                logger.warning(f"Failed to release lock for run_id: {run_id[:16]}...")
 
-        except Exception as e:
-            logger.error(f"Category scan failed: {e}")
-            raise
+            if scan_completed_successfully and released:
+                pending = await scan_lock_manager.consume_pending()
+                if pending:
+                    logger.info("Processing queued scan request after run_id: %s", run_id[:16])
+                    await self.scan_entrypoint(trigger="queued")
 
     async def _process_discovered_deal(self, deal):
         """
